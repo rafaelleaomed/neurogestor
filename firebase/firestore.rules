@@ -1,0 +1,64 @@
+rules_version = '2';
+service cloud.firestore {
+  match /databases/{database}/documents {
+    
+    // ============================================================
+    // GOVERNANÇA E CONTROLE DE ACESSO - NEUROGESTOR
+    // Modelo: Deny by default -> Autenticação -> RBAC (Role-Based)
+    // ============================================================
+    
+    // Função auxiliar para verificar autenticação
+    function isAuthenticated() {
+      return request.auth != null;
+    }
+
+    // Função auxiliar para verificar se o usuário é Administrador/Proprietário
+    function isAdmin() {
+      return isAuthenticated() && 
+        (request.auth.token.role == 'admin' || 
+         request.auth.token.role == 'owner' || 
+         request.auth.token.email == 'rafaelleaobh@gmail.com');
+    }
+
+    // Regra para Cirurgias (Dados Clínicos Sensíveis - LGPD Art. 5º, II)
+    match /surgeries/{surgeryId} {
+      // Bloqueio padrão para acesso anônimo não autorizado
+      allow read: if isAuthenticated();
+      allow create, update: if isAuthenticated();
+      allow delete: if isAdmin();
+    }
+
+    // Regra para Usuários e Acessos
+    match /users/{userId} {
+      allow read: if isAuthenticated();
+      allow write: if isAdmin() || (isAuthenticated() && request.auth.uid == userId);
+    }
+
+    // Regra para Cofre de Senhas e Credenciais Administrativas
+    match /passwords/{passwordId} {
+      allow read, write: if isAdmin();
+    }
+
+    // Configurações e Modelos do Sistema
+    match /config/{configId} {
+      allow read: if isAuthenticated();
+      allow write: if isAdmin();
+    }
+    match /report_templates/{templateId} {
+      allow read: if isAuthenticated();
+      allow write: if isAdmin();
+    }
+    match /electrode_models/{modelId} {
+      allow read: if isAuthenticated();
+      allow write: if isAdmin();
+    }
+    match /learned_categories/{catId} {
+      allow read, write: if isAuthenticated();
+    }
+
+    // BLOQUEIO GERAL: Qualquer outra coleção ou documento não especificado é negado
+    match /{document=**} {
+      allow read, write: if false;
+    }
+  }
+}

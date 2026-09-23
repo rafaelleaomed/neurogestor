@@ -1,0 +1,52 @@
+# Logs
+logs
+*.log
+npm-debug.log*
+yarn-debug.log*
+yarn-error.log*
+pnpm-debug.log*
+lerna-debug.log*
+
+# Dependencies
+node_modules
+functions/node_modules
+functions/lib
+
+# Build outputs
+dist
+dist-ssr
+
+# Environment and secrets
+.env
+.env.*
+!.env.example
+*.local
+
+# Python
+.venv/
+venv/
+ENV/
+__pycache__/
+*.py[cod]
+*$py.class
+
+# Firebase & Cloud
+.firebase/
+.firebaserc.local
+
+# IDE and OS
+.vscode/*
+!.vscode/extensions.json
+.idea
+.DS_Store
+*.suo
+*.ntvs*
+*.njsproj
+*.sln
+*.sw?
+.gemini/
+.agent/
+
+# Temporary / Output files
+output.txt
+output_deploy.txt

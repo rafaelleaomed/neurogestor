@@ -1,0 +1,7 @@
+{
+  "name": "NeuroGestor",
+  "description": "Intelligent management system for neurosurgeons and neurophysiologists with surgical tracking, automated billing, and AI-powered label OCR.",
+  "requestFramePermissions": [
+    "camera"
+  ]
+}

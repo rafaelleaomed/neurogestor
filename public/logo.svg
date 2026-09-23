@@ -1,0 +1,81 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 200 200" width="200" height="200">
+  <defs>
+    <linearGradient id="bgGrad" x1="0%" y1="0%" x2="100%" y2="100%">
+      <stop offset="0%" style="stop-color:#0f2a6e;stop-opacity:1" />
+      <stop offset="100%" style="stop-color:#135bec;stop-opacity:1" />
+    </linearGradient>
+    <linearGradient id="brainGrad" x1="0%" y1="0%" x2="100%" y2="100%">
+      <stop offset="0%" style="stop-color:#ffffff;stop-opacity:1" />
+      <stop offset="100%" style="stop-color:#aac4ff;stop-opacity:1" />
+    </linearGradient>
+  </defs>
+
+  <!-- Fundo arredondado -->
+  <rect width="200" height="200" rx="44" fill="url(#bgGrad)"/>
+
+  <!-- Neurônios de fundo (decorativos) -->
+  <circle cx="30" cy="40" r="3" fill="white" opacity="0.15"/>
+  <circle cx="170" cy="160" r="3" fill="white" opacity="0.15"/>
+  <circle cx="160" cy="45" r="2" fill="white" opacity="0.12"/>
+  <circle cx="40" cy="158" r="2" fill="white" opacity="0.12"/>
+  <line x1="30" y1="40" x2="160" y2="45" stroke="white" stroke-width="0.6" opacity="0.08"/>
+  <line x1="170" y1="160" x2="40" y2="158" stroke="white" stroke-width="0.6" opacity="0.08"/>
+
+  <!-- Forma do cérebro estilizado - lado esquerdo -->
+  <path d="M 68 70
+    C 55 68, 44 75, 44 88
+    C 44 98, 50 105, 58 108
+    C 54 112, 52 118, 55 124
+    C 58 130, 66 132, 74 130
+    C 76 138, 84 142, 92 140
+    L 92 70
+    Z"
+    fill="url(#brainGrad)" opacity="0.95"/>
+
+  <!-- Forma do cérebro estilizado - lado direito -->
+  <path d="M 108 70
+    C 121 68, 132 75, 132 88
+    C 132 98, 126 105, 118 108
+    C 122 112, 124 118, 121 124
+    C 118 130, 110 132, 102 130
+    C 100 138, 92 142, 92 140
+    L 92 70
+    Z"
+    fill="url(#brainGrad)" opacity="0.95"/>
+
+  <!-- Divisão central hemisférios -->
+  <line x1="100" y1="72" x2="100" y2="138" stroke="#135bec" stroke-width="2.5" opacity="0.5"/>
+
+  <!-- Sulcos do cérebro - lado esquerdo -->
+  <path d="M 66 85 C 72 83, 80 86, 84 90" stroke="#135bec" stroke-width="1.8" fill="none" opacity="0.5" stroke-linecap="round"/>
+  <path d="M 62 100 C 70 96, 80 98, 85 104" stroke="#135bec" stroke-width="1.8" fill="none" opacity="0.5" stroke-linecap="round"/>
+  <path d="M 68 115 C 75 112, 83 114, 87 120" stroke="#135bec" stroke-width="1.8" fill="none" opacity="0.5" stroke-linecap="round"/>
+
+  <!-- Sulcos do cérebro - lado direito -->
+  <path d="M 134 85 C 128 83, 120 86, 116 90" stroke="#135bec" stroke-width="1.8" fill="none" opacity="0.5" stroke-linecap="round"/>
+  <path d="M 138 100 C 130 96, 120 98, 115 104" stroke="#135bec" stroke-width="1.8" fill="none" opacity="0.5" stroke-linecap="round"/>
+  <path d="M 132 115 C 125 112, 117 114, 113 120" stroke="#135bec" stroke-width="1.8" fill="none" opacity="0.5" stroke-linecap="round"/>
+
+  <!-- Nós de rede neural - decorativos luminosos -->
+  <circle cx="76" cy="88" r="4.5" fill="#4f8aff" opacity="0.9"/>
+  <circle cx="68" cy="105" r="3.5" fill="#4f8aff" opacity="0.85"/>
+  <circle cx="79" cy="120" r="3.5" fill="#4f8aff" opacity="0.85"/>
+  <circle cx="124" cy="88" r="4.5" fill="#4f8aff" opacity="0.9"/>
+  <circle cx="132" cy="105" r="3.5" fill="#4f8aff" opacity="0.85"/>
+  <circle cx="121" cy="120" r="3.5" fill="#4f8aff" opacity="0.85"/>
+  <circle cx="100" cy="80" r="5" fill="white" opacity="0.95"/>
+
+  <!-- Conexões de rede neural -->
+  <line x1="100" y1="80" x2="76" y2="88" stroke="white" stroke-width="1.2" opacity="0.5"/>
+  <line x1="100" y1="80" x2="124" y2="88" stroke="white" stroke-width="1.2" opacity="0.5"/>
+  <line x1="76" y1="88" x2="68" y2="105" stroke="white" stroke-width="1" opacity="0.4"/>
+  <line x1="68" y1="105" x2="79" y2="120" stroke="white" stroke-width="1" opacity="0.4"/>
+  <line x1="124" y1="88" x2="132" y2="105" stroke="white" stroke-width="1" opacity="0.4"/>
+  <line x1="132" y1="105" x2="121" y2="120" stroke="white" stroke-width="1" opacity="0.4"/>
+
+  <!-- Texto NG embaixo -->
+  <text x="100" y="168" font-family="'Helvetica Neue', Arial, sans-serif" font-weight="800" font-size="22" fill="white" text-anchor="middle" letter-spacing="4" opacity="0.92">NG</text>
+
+  <!-- Linha decorativa abaixo do texto -->
+  <rect x="72" y="172" width="56" height="2" rx="1" fill="white" opacity="0.25"/>
+</svg>

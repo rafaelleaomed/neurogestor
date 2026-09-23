@@ -1,0 +1,29 @@
+rules_version = '2';
+service firebase.storage {
+  match /b/{bucket}/o {
+    
+    // ============================================================
+    // SEGURANÇA E PRIVACIDADE DE DOCUMENTOS E IMAGENS CLÍNICAS
+    // Exames, fotos intraoperatórias e laudos - LGPD & CFM 2.336/2023
+    // ============================================================
+
+    function isAuthenticated() {
+      return request.auth != null;
+    }
+
+    // Imagens de cirurgias e documentos médicos
+    match /surgeries/{surgeryId}/{allPaths=**} {
+      // Bloqueia acesso não autenticado
+      allow read: if isAuthenticated();
+      // Permite upload apenas para usuários autenticados com arquivos de imagem válidos (< 15MB)
+      allow write: if isAuthenticated() 
+        && request.resource.size < 15 * 1024 * 1024
+        && request.resource.contentType.matches('image/.*');
+    }
+
+    // Demais diretórios e arquivos
+    match /{allPaths=**} {
+      allow read, write: if isAuthenticated();
+    }
+  }
+}
