@@ -5,6 +5,8 @@
 
 <div align="center">
 
+[![Live Demo](https://img.shields.io/badge/Live%20Demo-neurogestor--app.web.app-blue?style=for-the-badge&logo=firebase)](https://neurogestor-app.web.app)
+
 [![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](https://opensource.org/licenses/MIT)
 ![React](https://img.shields.io/badge/React-19-blue?logo=react)
 ![TypeScript](https://img.shields.io/badge/TypeScript-5.8-blue?logo=typescript)
