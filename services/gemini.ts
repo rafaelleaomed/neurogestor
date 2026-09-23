@@ -531,3 +531,62 @@ Não inclua cabeçalho, saudação ou rodapé. Entregue apenas o texto do laudo.
     return response.text || "";
   });
 };
+
+// ============================================================
+// RESUMO CLÍNICO INTELIGENTE PARA PORTFÓLIO (IA)
+// ============================================================
+
+export const generateCaseClinicalSummary = async (surgery: Partial<Surgery>): Promise<string> => {
+  try {
+    return await aiQueue.add(async () => {
+      const ai = new GoogleGenAI({ apiKey: process.env.API_KEY });
+
+      let alarmeContext = "Procedimento transcorreu sem alterações ou alarmes neurofisiológicos críticos.";
+      if (surgery.houve_alarme) {
+        alarmeContext = `Houve alarme/alteração neurofisiológica intraoperatória. Condutas executadas: ${(surgery.condutas_alarme || []).join(', ') || 'Manobras corretivas aplicadas'}.`;
+      }
+
+      const tags = (surgery.portfolio_tags || []).join(', ');
+      const notes = surgery.portfolio_notes || surgery.observacoes || '';
+
+      const prompt = `Você é um médico especialista em neurofisiologia clínica e monitorização neurofisiológica intraoperatória (MNIO).
+Crie um RESUMO CLÍNICO E TÉCNICO (de 2 a 4 frases, em português do Brasil) para ser exibido em um portfólio médico de casos de destaque e apresentações clínicas.
+
+DADOS DO CASO:
+- Procedimento: ${surgery.procedimento || 'Não especificado'}
+- Subtipo: ${surgery.subtipo || 'Geral'}
+- Níveis Operados: ${surgery.niveis_operados || 'Não aplicável'}
+- Categoria: ${surgery.categoria || 'Geral'}
+- Complexidade: ${surgery.complexity_level || 'Padrão'}
+- Técnicas de Monitorização: ${(surgery.tecnicas_mnio || []).join(', ') || 'PEM, PESS, EMG contínua/estimulada'}
+- Situação de Alarme / Intercorrência: ${alarmeContext}
+- Destaques / Tags: ${tags || 'Nenhum'}
+- Notas Clínicas do Especialista: ${notes || 'Nenhuma'}
+
+DIRETRIZES:
+- Escreva em linguagem médica culta, precisa e objetiva.
+- Destaque o procedimento cirúrgico, os níveis abordados, a relevância da monitorização neurofisiológica para a preservação funcional e o desfecho intraoperatório.
+- Não inclua saudações, introduções ("Segue o resumo:"), marcadores em tópicos nem assinatura.
+- Retorne estritamente o texto corrido do parágrafo de resumo.`;
+
+      const response = await callGeminiWithFallback(ai, {
+        contents: prompt,
+      });
+
+      const text = (response.text || "").trim();
+      if (text) return text;
+      throw new Error("Resposta vazia da IA");
+    });
+  } catch (err) {
+    console.warn("[NeuroGestor] Fallback de resumo clínico do caso acionado:", err);
+    // Fallback estruturado de alta qualidade clínica
+    const niveis = surgery.niveis_operados ? ` em níveis ${surgery.niveis_operados}` : '';
+    const subtipo = surgery.subtipo ? ` (${surgery.subtipo})` : '';
+    const alarme = surgery.houve_alarme
+      ? ' Durante o ato cirúrgico, houve registro de alerta neurofisiológico com imediata comunicação à equipe e adoção de condutas protetoras.'
+      : ' O ato cirúrgico transcorreu com estabilidade dos potenciais evocados e segurança neurológica preservada.';
+    const notas = surgery.portfolio_notes ? ` Observações clínicas relevantes: ${surgery.portfolio_notes}` : '';
+    return `Caso cirúrgico de ${surgery.procedimento || 'Procedimento Cirúrgico'}${subtipo}${niveis}. Realizada monitorização neurofisiológica intraoperatória multimodal para salvaguarda de vias neurais críticas.${alarme}${notas}`;
+  }
+};
+

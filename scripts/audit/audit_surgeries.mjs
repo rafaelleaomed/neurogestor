@@ -5,7 +5,7 @@ import { getFirestore, collection, getDocs } from 'firebase/firestore';
 
 // Utiliza variáveis de ambiente ou configuração padrão de desenvolvimento
 const firebaseConfig = {
-    apiKey: process.env.VITE_FIREBASE_API_KEY || "AIzaSyAbRW1AhJABBcC9bMtD7wKZLHgDFZZ7JVo",
+    apiKey: process.env.VITE_FIREBASE_API_KEY || "",
     authDomain: "neurogestor-app.firebaseapp.com",
     projectId: "neurogestor-app",
     storageBucket: "neurogestor-app.firebasestorage.app",

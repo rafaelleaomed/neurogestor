@@ -2,7 +2,7 @@ import { initializeApp } from 'firebase/app';
 import { getFirestore, doc, updateDoc, deleteDoc, getDoc } from 'firebase/firestore';
 
 const firebaseConfig = {
-    apiKey: process.env.VITE_FIREBASE_API_KEY || "AIzaSyAbRW1AhJABBcC9bMtD7wKZLHgDFZZ7JVo",
+    apiKey: process.env.VITE_FIREBASE_API_KEY || "",
     authDomain: "neurogestor-app.firebaseapp.com",
     projectId: "neurogestor-app",
     storageBucket: "neurogestor-app.firebasestorage.app",

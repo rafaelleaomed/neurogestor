@@ -859,13 +859,13 @@ const Dashboard: React.FC<{ onLogout: () => void }> = ({ onLogout }) => {
         )}
 
         {/* Header */}
-        <header className="bg-white/95 dark:bg-slate-900/95 backdrop-blur-xl sticky top-0 z-40 border-b border-slate-100 dark:border-slate-800 px-4 sm:px-6 py-3 sm:py-4">
-          <div className="max-w-7xl mx-auto flex items-center justify-between gap-2 sm:gap-4">
-            <div className="flex items-center space-x-2 sm:space-x-4">
-              <div className="w-8 h-8 sm:w-10 sm:h-10 flex items-center justify-center">
+        <header className="bg-white/95 dark:bg-slate-900/95 backdrop-blur-xl sticky top-0 z-40 border-b border-slate-100 dark:border-slate-800 px-3 sm:px-6 py-2.5 sm:py-4">
+          <div className="max-w-7xl mx-auto flex items-center justify-between gap-1 sm:gap-4">
+            <div className="flex items-center space-x-2 sm:space-x-4 min-w-0">
+              <div className="w-8 h-8 sm:w-10 sm:h-10 flex items-center justify-center flex-shrink-0">
                 <img src="/logo.png" alt="NeuroGestor Logo" className="w-full h-full object-contain" />
               </div>
-              <span className="text-lg sm:text-2xl font-black text-slate-900 dark:text-white tracking-tight">NeuroGestor</span>
+              <span className="text-base sm:text-2xl font-black text-slate-900 dark:text-white tracking-tight truncate">NeuroGestor</span>
               {/* Desktop nav - hidden on mobile */}
               <nav className="hidden md:flex ml-4 space-x-1 bg-slate-100 dark:bg-slate-800 p-1 rounded-2xl">
                 <button onClick={() => setActiveTab('overview')} className={`px-6 py-2 rounded-xl text-xs font-black transition-all ${activeTab === 'overview' ? 'bg-white dark:bg-slate-700 shadow-sm text-primary' : 'text-slate-500 hover:text-slate-700'}`}>Painel</button>
@@ -880,35 +880,35 @@ const Dashboard: React.FC<{ onLogout: () => void }> = ({ onLogout }) => {
                 )}
               </nav>
             </div>
-            <div className="flex items-center space-x-2 sm:space-x-4">
+            <div className="flex items-center space-x-0.5 sm:space-x-3 flex-shrink-0">
               {(currentUser?.email?.toLowerCase() === ADMIN_EMAIL.toLowerCase() || currentUser?.role === 'owner' || currentUser?.role === 'admin') && (
                 <button
                   onClick={() => navigate('/admin')}
                   title="Painel de Gestão"
-                  className="p-2 text-indigo-500 hover:text-indigo-700 transition-all"
+                  className="p-1.5 sm:p-2 text-indigo-500 hover:text-indigo-700 hover:bg-indigo-50 dark:hover:bg-indigo-950/40 rounded-xl transition-all flex-shrink-0"
                 >
-                  <span className="material-icons">admin_panel_settings</span>
+                  <span className="material-icons text-xl sm:text-2xl">admin_panel_settings</span>
                 </button>
               )}
               {isAdmin && (
                 <button
                   onClick={() => setActiveTab('users')}
                   title="Gestão de Usuários"
-                  className={`p-2 transition-all rounded-xl ${activeTab === 'users' ? 'text-primary bg-primary/10' : 'text-slate-400 hover:text-slate-600'}`}
+                  className={`p-1.5 sm:p-2 transition-all rounded-xl flex-shrink-0 ${activeTab === 'users' ? 'text-primary bg-primary/10' : 'text-slate-400 hover:text-slate-600 hover:bg-slate-100 dark:hover:bg-slate-800'}`}
                 >
-                  <span className="material-icons">people</span>
+                  <span className="material-icons text-xl sm:text-2xl">people</span>
                 </button>
               )}
-              <button onClick={() => setIsSettingsOpen(true)} className="p-2 text-slate-400 hover:text-primary transition-all">
-                <span className="material-icons">settings</span>
+              <button onClick={() => setIsSettingsOpen(true)} title="Configurações" className="p-1.5 sm:p-2 text-slate-400 hover:text-primary hover:bg-slate-100 dark:hover:bg-slate-800 rounded-xl transition-all flex-shrink-0">
+                <span className="material-icons text-xl sm:text-2xl">settings</span>
               </button>
               {!isAssistant && (
                 <button
                   onClick={togglePrivacyMode}
                   title={isPrivacyMode ? 'Modo Privacidade LGPD Ativo (Nomes e Valores Ocultos)' : 'Modo Clínico Ativo (Nomes e Valores Visíveis)'}
-                  className={`p-2 transition-all rounded-xl ${isPrivacyMode ? 'text-emerald-600 bg-emerald-50 dark:bg-emerald-950/40 border border-emerald-200 dark:border-emerald-800' : 'text-slate-400 hover:text-slate-600'}`}
+                  className={`p-1.5 sm:p-2 transition-all rounded-xl flex-shrink-0 ${isPrivacyMode ? 'text-emerald-600 bg-emerald-50 dark:bg-emerald-950/40 border border-emerald-200 dark:border-emerald-800' : 'text-slate-400 hover:text-slate-600 hover:bg-slate-100 dark:hover:bg-slate-800'}`}
                 >
-                  <span className="material-icons">{isPrivacyMode ? 'shield' : 'visibility'}</span>
+                  <span className="material-icons text-xl sm:text-2xl">{isPrivacyMode ? 'shield' : 'visibility'}</span>
                 </button>
               )}
               <div className="hidden sm:flex items-center space-x-3 text-right">
@@ -920,8 +920,8 @@ const Dashboard: React.FC<{ onLogout: () => void }> = ({ onLogout }) => {
                   <img src={currentUser?.picture || `https://ui-avatars.com/api/?name=${currentUser?.name}&background=135bec&color=fff`} className="w-full h-full object-cover" />
                 </div>
               </div>
-              <button onClick={onLogout} className="p-2 text-slate-400 hover:text-red-500 transition-colors">
-                <span className="material-icons">logout</span>
+              <button onClick={onLogout} title="Sair" className="p-1.5 sm:p-2 text-slate-400 hover:text-red-500 hover:bg-red-50 dark:hover:bg-red-950/30 rounded-xl transition-colors flex-shrink-0">
+                <span className="material-icons text-xl sm:text-2xl">logout</span>
               </button>
             </div>
           </div>
@@ -1174,7 +1174,7 @@ const Dashboard: React.FC<{ onLogout: () => void }> = ({ onLogout }) => {
                   </div>
                   <div className="h-80">
                     <ResponsiveContainer width="100%" height="100%">
-                      <BarChart data={monthlyRevenueData} margin={{ left: -20 }}>
+                      <BarChart data={monthlyRevenueData} margin={{ left: metricMode === 'volume' ? -15 : -10, right: 10, top: 10, bottom: 0 }}>
                         <defs>
                           <linearGradient id="colorRevenue" x1="0" y1="1" x2="0" y2="0">
                             <stop offset="5%" stopColor="#3b82f6" stopOpacity={0.8} />
@@ -1197,10 +1197,34 @@ const Dashboard: React.FC<{ onLogout: () => void }> = ({ onLogout }) => {
                             <stop offset="95%" stopColor="#b45309" stopOpacity={0.9} />
                           </linearGradient>
                         </defs>
-                        <CartesianGrid strokeDasharray="3 3" vertical={false} stroke="#f1f5f9" />
+                        <CartesianGrid strokeDasharray="3 3" vertical={false} stroke={isDarkMode ? '#334155' : '#f1f5f9'} opacity={0.5} />
                         <XAxis dataKey="name" axisLine={false} tickLine={false} tick={{ fontSize: 10, fontWeight: 700, fill: '#94a3b8' }} />
-                        <YAxis axisLine={false} tickLine={false} tick={{ fontSize: 10, fontWeight: 700, fill: '#94a3b8' }} tickFormatter={(v) => `R$${v / 1000}k`} />
-                        <Tooltip cursor={{ fill: isDarkMode ? 'rgba(255,255,255,0.05)' : '#f8fafc' }} contentStyle={{ backgroundColor: isDarkMode ? '#0f172a' : '#ffffff', color: isDarkMode ? '#f8fafc' : '#0f172a', borderRadius: '16px', border: isDarkMode ? '1px solid #1e293b' : 'none', boxShadow: '0 10px 15px -3px rgb(0 0 0 / 0.1)' }} itemStyle={{ color: isDarkMode ? '#f8fafc' : '#0f172a' }} />
+                        <YAxis
+                          axisLine={false}
+                          tickLine={false}
+                          tick={{ fontSize: 10, fontWeight: 700, fill: '#94a3b8' }}
+                          allowDecimals={false}
+                          tickFormatter={(v) => metricMode === 'volume' ? `${Math.round(v)}` : (v >= 1000 ? `R$${Math.round(v / 1000)}k` : `R$${v}`)}
+                        />
+                        <Tooltip
+                          cursor={{ fill: isDarkMode ? 'rgba(255,255,255,0.05)' : '#f8fafc' }}
+                          contentStyle={{
+                            backgroundColor: isDarkMode ? '#0f172a' : '#ffffff',
+                            color: isDarkMode ? '#f8fafc' : '#0f172a',
+                            borderRadius: '16px',
+                            border: isDarkMode ? '1px solid #1e293b' : 'none',
+                            boxShadow: '0 10px 15px -3px rgb(0 0 0 / 0.1)',
+                            padding: '12px'
+                          }}
+                          itemStyle={{ color: isDarkMode ? '#f8fafc' : '#0f172a' }}
+                          formatter={(value: any) => [
+                            metricMode === 'volume'
+                              ? `${value} cirurgia${Number(value) !== 1 ? 's' : ''}`
+                              : fmtMoney(Number(value) || 0),
+                            metricMode === 'volume' ? 'Volume' : 'Faturamento'
+                          ]}
+                          labelStyle={{ fontWeight: 800, color: isDarkMode ? '#94a3b8' : '#64748b', marginBottom: '4px' }}
+                        />
                         <Bar dataKey="value" fill="url(#colorRevenue)" radius={[8, 8, 0, 0]} barSize={40} />
                       </BarChart>
                     </ResponsiveContainer>

@@ -4,12 +4,12 @@ import { getStorage } from 'firebase/storage';
 import { getMessaging, isSupported } from 'firebase/messaging';
 
 const firebaseConfig = {
-    apiKey: "AIzaSyAbRW1AhJABBcC9bMtD7wKZLHgDFZZ7JVo",
-    authDomain: "neurogestor-app.firebaseapp.com",
-    projectId: "neurogestor-app",
-    storageBucket: "neurogestor-app.firebasestorage.app",
-    messagingSenderId: "744896910428",
-    appId: "1:744896910428:web:6cbb0c665701d3acc1c299"
+    apiKey: import.meta.env.VITE_FIREBASE_API_KEY || "",
+    authDomain: import.meta.env.VITE_FIREBASE_AUTH_DOMAIN || "neurogestor-app.firebaseapp.com",
+    projectId: import.meta.env.VITE_FIREBASE_PROJECT_ID || "neurogestor-app",
+    storageBucket: import.meta.env.VITE_FIREBASE_STORAGE_BUCKET || "neurogestor-app.firebasestorage.app",
+    messagingSenderId: import.meta.env.VITE_FIREBASE_MESSAGING_SENDER_ID || "744896910428",
+    appId: import.meta.env.VITE_FIREBASE_APP_ID || "1:744896910428:web:6cbb0c665701d3acc1c299"
 };
 
 const app = initializeApp(firebaseConfig);
