@@ -345,27 +345,37 @@ Eventos: ${JSON.stringify(events.slice(0, 30))}`;
 // OCR EM LOTE (BATCH) — OTIMIZADO COM CONTEXTO
 // ============================================================
 
+export type BatchImageInput = string | { base64: string; fileName?: string };
+
 export const performBatchLabelsOCR = async (
-  base64Images: string[],
+  images: BatchImageInput[],
   onProgress?: (processed: number, total: number) => void
 ): Promise<Surgery[]> => {
-  if (base64Images.length === 0) return [];
+  if (images.length === 0) return [];
+
+  const normalizedImages = images.map((item, idx) => {
+    if (typeof item === 'string') {
+      return { base64: item, fileName: `Foto ${idx + 1}` };
+    }
+    return { base64: item.base64, fileName: item.fileName || `Foto ${idx + 1}` };
+  });
 
   const allResults: Surgery[] = [];
-  const total = base64Images.length;
+  const total = normalizedImages.length;
   let processedCount = 0;
 
   // Processa as imagens com concorrência controlada de 2 em 2
   // Isso previne estouro de taxa da API (RPM) ao mesmo tempo que mantém altíssima velocidade
   const CONCURRENCY = 2;
-  const queue = [...base64Images.map((img, index) => ({ img, index }))];
+  const queue = [...normalizedImages.map((item, index) => ({ item, index }))];
 
   const processImageWorker = async () => {
     while (queue.length > 0) {
-      const item = queue.shift();
-      if (!item) break;
+      const entry = queue.shift();
+      if (!entry) break;
 
-      const { img, index } = item;
+      const { item, index } = entry;
+      const { base64: img, fileName } = item;
       try {
         // Usa performOCR individual que possui esquema JSON rígido e extrai convênio
         const ocrData = await performOCR(img);
@@ -373,7 +383,7 @@ export const performBatchLabelsOCR = async (
 
         allResults.push({
           id: crypto.randomUUID(),
-          paciente: ocrData.paciente || "Paciente a identificar (Revisar)",
+          paciente: ocrData.paciente || `Paciente a identificar (${fileName})`,
           procedimento: proc,
           medico: ocrData.medico || "Médico não informado",
           hospital: ocrData.hospital || "Hospital não informado",
@@ -383,15 +393,16 @@ export const performBatchLabelsOCR = async (
           valor_estimado: calculatePrice(proc, undefined, undefined, ocrData.convenio),
           status: Status.REALIZADO,
           created_at: Date.now() + index,
-          label_images: [img]
+          label_images: [img],
+          observacoes: `Etiqueta original: ${fileName}`
         });
       } catch (err) {
-        console.warn(`[NeuroGestor] Erro na leitura da etiqueta ${index + 1}:`, err);
+        console.warn(`[NeuroGestor] Erro na leitura da etiqueta ${fileName}:`, err);
         // Mesmo em caso de falha pontual da IA, NUNCA descarta a imagem enviada pelo médico!
-        // Cria um card com os dados provisórios para preenchimento manual na tela de revisão
+        // Cria um card com os dados provisórios informando o nome do arquivo para revisão
         allResults.push({
           id: crypto.randomUUID(),
-          paciente: "Paciente a identificar (Revisar)",
+          paciente: `Paciente a identificar (${fileName})`,
           procedimento: "Procedimento a identificar",
           medico: "Não informado",
           hospital: "Não informado",
@@ -400,7 +411,8 @@ export const performBatchLabelsOCR = async (
           valor_estimado: 0,
           status: Status.REALIZADO,
           created_at: Date.now() + index,
-          label_images: [img]
+          label_images: [img],
+          observacoes: `Foto original: ${fileName}. A IA não conseguiu ler o texto desta etiqueta com nitidez. Revise os dados na imagem anexada.`
         });
       } finally {
         processedCount++;
@@ -411,7 +423,7 @@ export const performBatchLabelsOCR = async (
     }
   };
 
-  const workers = Array.from({ length: Math.min(CONCURRENCY, base64Images.length) }, () => processImageWorker());
+  const workers = Array.from({ length: Math.min(CONCURRENCY, normalizedImages.length) }, () => processImageWorker());
   await Promise.all(workers);
 
   // Ordena os resultados para manter a mesma ordem de upload original

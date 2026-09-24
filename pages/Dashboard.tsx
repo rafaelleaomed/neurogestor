@@ -93,6 +93,44 @@ const Dashboard: React.FC<{ onLogout: () => void }> = ({ onLogout }) => {
   const [isSettingsOpen, setIsSettingsOpen] = useState(false);
   const [batchReviewData, setBatchReviewData] = useState<Surgery[] | null>(null);
   const [previewImage, setPreviewImage] = useState<string | null>(null);
+  const [batchFailedFiles, setBatchFailedFiles] = useState<string[]>([]);
+
+  // Helper para download de imagens base64 / blob imune a bloqueios de nova aba em celulares
+  const downloadBase64Image = (dataUrl: string, filename: string) => {
+    try {
+      if (dataUrl.startsWith('http://') || dataUrl.startsWith('https://')) {
+        const a = document.createElement('a');
+        a.href = dataUrl;
+        a.download = filename;
+        a.target = '_blank';
+        document.body.appendChild(a);
+        a.click();
+        document.body.removeChild(a);
+        return;
+      }
+
+      const parts = dataUrl.split(';base64,');
+      const contentType = parts[0].split(':')[1] || 'image/jpeg';
+      const raw = window.atob(parts[1] || parts[0]);
+      const uInt8Array = new Uint8Array(raw.length);
+      for (let i = 0; i < raw.length; ++i) {
+        uInt8Array[i] = raw.charCodeAt(i);
+      }
+      const blob = new Blob([uInt8Array], { type: contentType });
+      const blobUrl = URL.createObjectURL(blob);
+
+      const a = document.createElement('a');
+      a.href = blobUrl;
+      a.download = filename;
+      document.body.appendChild(a);
+      a.click();
+      document.body.removeChild(a);
+      setTimeout(() => URL.revokeObjectURL(blobUrl), 1000);
+    } catch (err) {
+      console.error('Erro ao baixar imagem:', err);
+      window.open(dataUrl);
+    }
+  };
 
   const [selectedIds, setSelectedIds] = useState<Set<string>>(new Set());
 
@@ -646,37 +684,63 @@ const Dashboard: React.FC<{ onLogout: () => void }> = ({ onLogout }) => {
     if (files.length === 0) return;
     setIsProcessing(true);
     setProcessProgress(0);
+    setBatchFailedFiles([]);
     setProcessingMsg(`Preparando e otimizando ${files.length} imagens...`);
 
-    const base64Images: string[] = [];
+    const preparedImages: Array<{ base64: string; fileName: string }> = [];
+    const failedList: string[] = [];
+
     for (let i = 0; i < files.length; i++) {
       const file = files[i];
       try {
-        setProcessingMsg(`Otimizando foto ${i + 1} de ${files.length}...`);
+        setProcessingMsg(`Otimizando foto ${i + 1} de ${files.length} (${file.name})...`);
         setProcessProgress(Math.round(((i + 1) / files.length) * 25));
-        // Otimização: 1280px e 0.75 economizam até 75% da RAM em celulares sem perder legibilidade no OCR
-        const b64 = await compressImage(file, 1280, 0.75);
-        base64Images.push(b64);
+
+        let b64 = '';
+        try {
+          // 1. Tenta compressão otimizada via canvas
+          b64 = await compressImage(file, 1280, 0.75);
+        } catch (canvasErr) {
+          console.warn(`[NeuroGestor] Fallback para leitura direta de ${file.name}:`, canvasErr);
+          // 2. Fallback resiliente: lê como DataURL direto sem passar pelo canvas (útil para formatos ou aparelhos que bloqueiam canvas)
+          b64 = await new Promise<string>((resolve, reject) => {
+            const reader = new FileReader();
+            reader.onload = () => resolve(reader.result as string);
+            reader.onerror = () => reject(new Error('Falha no leitor de arquivos'));
+            reader.readAsDataURL(file);
+          });
+        }
+
+        if (b64 && b64.length > 50) {
+          preparedImages.push({ base64: b64, fileName: file.name });
+        } else {
+          failedList.push(file.name);
+        }
       } catch (err) {
-        console.error("Erro ao comprimir imagem em lote:", err);
+        console.error(`Erro ao carregar imagem ${file.name}:`, err);
+        failedList.push(file.name);
       }
     }
 
-    if (base64Images.length === 0) {
+    if (failedList.length > 0) {
+      setBatchFailedFiles(failedList);
+    }
+
+    if (preparedImages.length === 0) {
       setIsProcessing(false);
-      alert("Não foi possível processar as imagens selecionadas. Tente novamente.");
+      alert(`Nenhuma das ${files.length} imagens selecionadas pôde ser lida pelo navegador. Arquivos afetados: ${failedList.join(', ')}.`);
       return;
     }
 
     try {
-      setProcessingMsg(`IA analisando etiquetas... 0/${base64Images.length}`);
-      const results = await performBatchLabelsOCR(base64Images, (processed, total) => {
+      setProcessingMsg(`IA analisando etiquetas... 0/${preparedImages.length}`);
+      const results = await performBatchLabelsOCR(preparedImages, (processed, total) => {
         setProcessingMsg(`IA lendo etiquetas... ${processed}/${total}`);
         setProcessProgress(25 + Math.round((processed / total) * 75));
       });
 
       if (results.length === 0) {
-        alert(`Nenhuma etiqueta pôde ser lida nas ${files.length} imagens. Tente novamente com fotos mais nítidas.`);
+        alert(`Nenhuma etiqueta pôde ser lida nas ${preparedImages.length} imagens. Tente novamente com fotos mais nítidas.`);
       } else {
         // Vincula owner_email do usuário logado desde o início
         const mappedResults: Surgery[] = results.map(s => ({
@@ -689,6 +753,12 @@ const Dashboard: React.FC<{ onLogout: () => void }> = ({ onLogout }) => {
         if (dupeCount > 0) {
           showToast(`⚠️ ${dupeCount} possível(is) duplicata(s) detectada(s). Revise os itens destacados em amarelo.`, 'error');
         }
+
+        // Se algum arquivo falhou, avisa o usuário com o nome exato
+        if (failedList.length > 0) {
+          alert(`⚠️ Atenção: ${preparedImages.length} de ${files.length} fotos foram lidas com sucesso.\n\nO seguinte arquivo não pôde ser processado: "${failedList.join(', ')}".\n\nDica: verifique se é uma foto válida (JPG ou PNG) ou tire uma captura de tela da etiqueta.`);
+        }
+
         setBatchReviewData(checked);
       }
     } catch (err) {
@@ -876,6 +946,22 @@ const Dashboard: React.FC<{ onLogout: () => void }> = ({ onLogout }) => {
                 </button>
               </div>
               <div className="flex-1 overflow-y-auto p-4 sm:p-8 space-y-4">
+                {batchFailedFiles.length > 0 && (
+                  <div className="bg-amber-50 dark:bg-amber-950/40 border-2 border-amber-300 dark:border-amber-700/60 p-4 sm:p-5 rounded-2xl flex items-start gap-3 shadow-sm">
+                    <span className="material-icons text-amber-600 dark:text-amber-400 text-2xl flex-shrink-0 mt-0.5">warning</span>
+                    <div className="min-w-0 flex-1">
+                      <h4 className="text-xs sm:text-sm font-black text-amber-900 dark:text-amber-300 uppercase tracking-wide">
+                        {batchFailedFiles.length} foto(s) com erro de leitura no aparelho
+                      </h4>
+                      <p className="text-xs text-amber-800 dark:text-amber-400 mt-1 leading-relaxed">
+                        Os seguintes arquivos não puderam ser decodificados pelo navegador: <span className="font-bold underline">{batchFailedFiles.join(', ')}</span>.
+                      </p>
+                      <p className="text-[11px] text-amber-700 dark:text-amber-500 mt-1">
+                        💡 Dica: isso costuma ocorrer em fotos no formato HEIC do iPhone ou arquivos corrompidos. Você pode tirar uma captura de tela (print) da etiqueta e importá-la como JPG/PNG.
+                      </p>
+                    </div>
+                  </div>
+                )}
                 {batchReviewData.map((item, idx) => {
                   const hasLabelImg = item.label_images && item.label_images.length > 0 && item.label_images[0];
                   const isIncomplete = !item.paciente || item.paciente.toLowerCase().includes('a identificar') || !item.procedimento || !item.data;
@@ -1033,7 +1119,7 @@ const Dashboard: React.FC<{ onLogout: () => void }> = ({ onLogout }) => {
         {/* Lightbox / Zoom da Etiqueta Original */}
         {previewImage && (
           <div
-            className="fixed inset-0 bg-slate-950/90 backdrop-blur-md z-[95] flex flex-col items-center justify-center p-4 animate-in fade-in duration-200"
+            className="fixed inset-0 bg-slate-950/90 backdrop-blur-md z-[120] flex flex-col items-center justify-center p-4 animate-in fade-in duration-200"
             onClick={() => setPreviewImage(null)}
           >
             <div className="relative max-w-4xl max-h-[90vh] flex flex-col items-center" onClick={e => e.stopPropagation()}>
@@ -2541,15 +2627,33 @@ const Dashboard: React.FC<{ onLogout: () => void }> = ({ onLogout }) => {
                             <img
                               src={img}
                               alt={`Etiqueta ${idx + 1}`}
-                              className="h-32 sm:h-48 w-auto rounded-xl sm:rounded-2xl object-cover shadow-lg border border-slate-200 dark:border-slate-700"
+                              onClick={() => setPreviewImage(img)}
+                              className="h-32 sm:h-48 w-auto rounded-xl sm:rounded-2xl object-cover shadow-lg border border-slate-200 dark:border-slate-700 cursor-pointer hover:opacity-90 active:scale-95 transition-all"
+                              title="Toque para ampliar"
                             />
-                            <div className="absolute inset-0 flex items-center justify-center gap-2 opacity-0 group-hover:opacity-100 bg-slate-900/40 backdrop-blur-sm rounded-xl sm:rounded-2xl transition-opacity">
-                              <a href={img} target="_blank" rel="noopener noreferrer" className="w-10 h-10 flex items-center justify-center rounded-full bg-white/20 hover:bg-white/40 transition-colors">
-                                <span className="material-icons text-white text-lg">zoom_in</span>
-                              </a>
-                              <a href={img} download={`etiqueta_${selectedSurgery.id}_${idx + 1}.jpg`} className="w-10 h-10 flex items-center justify-center rounded-full bg-white/20 hover:bg-white/40 transition-colors" title="Baixar imagem">
-                                <span className="material-icons text-white text-lg">download</span>
-                              </a>
+                            <div className="absolute inset-0 flex items-center justify-center gap-2 opacity-90 sm:opacity-0 sm:group-hover:opacity-100 bg-slate-900/40 backdrop-blur-sm rounded-xl sm:rounded-2xl transition-opacity pointer-events-none">
+                              <button
+                                type="button"
+                                onClick={(e) => {
+                                  e.stopPropagation();
+                                  setPreviewImage(img);
+                                }}
+                                className="w-10 h-10 flex items-center justify-center rounded-full bg-white/30 hover:bg-white/50 text-white transition-colors pointer-events-auto shadow-md"
+                                title="Ampliar imagem da etiqueta"
+                              >
+                                <span className="material-icons text-lg">zoom_in</span>
+                              </button>
+                              <button
+                                type="button"
+                                onClick={(e) => {
+                                  e.stopPropagation();
+                                  downloadBase64Image(img, `etiqueta_${selectedSurgery.id}_${idx + 1}.jpg`);
+                                }}
+                                className="w-10 h-10 flex items-center justify-center rounded-full bg-white/30 hover:bg-white/50 text-white transition-colors pointer-events-auto shadow-md"
+                                title="Baixar imagem"
+                              >
+                                <span className="material-icons text-lg">download</span>
+                              </button>
                             </div>
                           </div>
                         ))}
@@ -2565,15 +2669,33 @@ const Dashboard: React.FC<{ onLogout: () => void }> = ({ onLogout }) => {
                             <img
                               src={img}
                               alt={`Relatório ${idx + 1}`}
-                              className="h-32 sm:h-48 w-auto rounded-xl sm:rounded-2xl object-cover shadow-lg border border-slate-200 dark:border-slate-700"
+                              onClick={() => setPreviewImage(img)}
+                              className="h-32 sm:h-48 w-auto rounded-xl sm:rounded-2xl object-cover shadow-lg border border-slate-200 dark:border-slate-700 cursor-pointer hover:opacity-90 active:scale-95 transition-all"
+                              title="Toque para ampliar"
                             />
-                            <div className="absolute inset-0 flex items-center justify-center gap-2 opacity-0 group-hover:opacity-100 bg-slate-900/40 backdrop-blur-sm rounded-xl sm:rounded-2xl transition-opacity">
-                              <a href={img} target="_blank" rel="noopener noreferrer" className="w-10 h-10 flex items-center justify-center rounded-full bg-white/20 hover:bg-white/40 transition-colors">
-                                <span className="material-icons text-white text-lg">zoom_in</span>
-                              </a>
-                              <a href={img} download={`relatorio_${selectedSurgery.id}_${idx + 1}.jpg`} className="w-10 h-10 flex items-center justify-center rounded-full bg-white/20 hover:bg-white/40 transition-colors" title="Baixar imagem">
-                                <span className="material-icons text-white text-lg">download</span>
-                              </a>
+                            <div className="absolute inset-0 flex items-center justify-center gap-2 opacity-90 sm:opacity-0 sm:group-hover:opacity-100 bg-slate-900/40 backdrop-blur-sm rounded-xl sm:rounded-2xl transition-opacity pointer-events-none">
+                              <button
+                                type="button"
+                                onClick={(e) => {
+                                  e.stopPropagation();
+                                  setPreviewImage(img);
+                                }}
+                                className="w-10 h-10 flex items-center justify-center rounded-full bg-white/30 hover:bg-white/50 text-white transition-colors pointer-events-auto shadow-md"
+                                title="Ampliar imagem do relatório"
+                              >
+                                <span className="material-icons text-lg">zoom_in</span>
+                              </button>
+                              <button
+                                type="button"
+                                onClick={(e) => {
+                                  e.stopPropagation();
+                                  downloadBase64Image(img, `relatorio_${selectedSurgery.id}_${idx + 1}.jpg`);
+                                }}
+                                className="w-10 h-10 flex items-center justify-center rounded-full bg-white/30 hover:bg-white/50 text-white transition-colors pointer-events-auto shadow-md"
+                                title="Baixar imagem"
+                              >
+                                <span className="material-icons text-lg">download</span>
+                              </button>
                             </div>
                           </div>
                         ))}
