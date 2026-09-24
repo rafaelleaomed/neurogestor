@@ -175,12 +175,16 @@ const postProcessOCRResult = (result: OCRResult): OCRResult => {
     if (matchDoc) medico = matchDoc;
   }
 
+  const rawConvenio = cleanField(result.convenio);
+  const convenio = rawConvenio ? rawConvenio.toUpperCase() : undefined;
+
   return {
     paciente: paciente || undefined,
     procedimento: procedimento || undefined,
     medico: medico || undefined,
     hospital: hospital || undefined,
-    data: data || undefined
+    data: data || undefined,
+    convenio: convenio || undefined
   };
 };
 
@@ -227,6 +231,7 @@ export const performOCR = async (base64Image: string): Promise<OCRResult> => {
 - medico: Cirurgião responsável (priorize nomes de cirurgiões)
 - hospital: Nome ou sigla da unidade hospitalar
 - data: Data da cirurgia (formato YYYY-MM-DD)
+- convenio: Nome do convênio / plano de saúde (ex: UNIMED, BRADESCO, SULAMERICA) ou 'PARTICULAR' se indicado
 
 ${context}
 Retorne estritamente o JSON com as chaves indicadas. Se algum campo não estiver visível na imagem, retorne "".`,
@@ -243,6 +248,7 @@ Retorne estritamente o JSON com as chaves indicadas. Se algum campo não estiver
             medico: { type: Type.STRING },
             hospital: { type: Type.STRING },
             data: { type: Type.STRING },
+            convenio: { type: Type.STRING },
           },
         },
       },
@@ -589,4 +595,39 @@ DIRETRIZES:
     return `Caso cirúrgico de ${surgery.procedimento || 'Procedimento Cirúrgico'}${subtipo}${niveis}. Realizada monitorização neurofisiológica intraoperatória multimodal para salvaguarda de vias neurais críticas.${alarme}${notas}`;
   }
 };
+
+// ============================================================
+// SUGESTÃO DE MODELO DE RELATÓRIO / LAUDO MNIO COM IA
+// ============================================================
+
+export const generateReportTemplateFromProcedure = async (procedureName: string): Promise<string> => {
+  try {
+    return await aiQueue.add(async () => {
+      const ai = new GoogleGenAI({ apiKey: process.env.API_KEY });
+      const prompt = `Você é um médico especialista em neurofisiologia clínica e monitorização neurofisiológica intraoperatória (MNIO).
+Crie um MODELO DE LAUDO / RELATÓRIO OPERATÓRIO PADRÃO estruturado para a cirurgia: "${procedureName}".
+
+ESTRUTURA DO MODELO DE LAUDO:
+- Procedimento / Indicação
+- Metodologia e Modalidades Empregadas (PEM, PESS, EMG, etc.)
+- Parâmetros e Evolução Transoperatória
+- Estimulação de Parafusos Pediculares / Mapeamento (se aplicável)
+- Conclusão / Desfecho Neurofisiológico
+
+DIRETRIZES:
+- Escreva em linguagem médica padrão culta em Português do Brasil.
+- Use texto fluido ou tópicos claros, pronto para uso em prontuário.
+- Retorne apenas o texto do laudo, pronto para ser copiado e editado livremente pelo neurofisiologista. Sem introduções nem saudações.`;
+
+      const response = await callGeminiWithFallback(ai, { contents: prompt });
+      const text = (response.text || "").trim();
+      if (text) return text;
+      throw new Error("Resposta vazia da IA");
+    });
+  } catch (err) {
+    console.warn("[NeuroGestor] Erro ao sugerir modelo com IA:", err);
+    return `RELATÓRIO DE MONITORIZAÇÃO NEUROFISIOLÓGICA INTRAOPERATÓRIA (MNIO)\n\nProcedimento: ${procedureName}\nModalidades: Potenciais Evocados Somatossensoriais (PESS), Motores (PEM) e Eletromiografia Contínua e Estimulada (EMG).\n\nEvolução Intraoperatória:\nO procedimento cirúrgico transcorreu sob monitorização neurofisiológica multimodal contínua. Os potenciais evocados mantiveram-se estáveis em relação aos registros basais de controle, sem evidências de alterações críticas ou lesão neural iatrogênica.\n\nConclusão:\nProcedimento cirúrgico finalizado com estabilidade neurofisiológica e integridade funcional preservada das vias neurais monitorizadas.`;
+  }
+};
+
 

@@ -668,27 +668,50 @@ export const reprocessSurgeriesPrices = async (
 
 // ============================================================
 // USUÁRIOS
-// ============================================================
+// Helper para remover campos undefined que causam erro fatal no Firestore
+const cleanUndefinedForFirestore = (obj: any): any => {
+  if (obj === null || obj === undefined) return null;
+  if (Array.isArray(obj)) return obj.map(cleanUndefinedForFirestore);
+  if (typeof obj === 'object') {
+    const res: Record<string, any> = {};
+    for (const [k, v] of Object.entries(obj)) {
+      if (v !== undefined) {
+        res[k] = cleanUndefinedForFirestore(v);
+      }
+    }
+    return res;
+  }
+  return obj;
+};
 
 export const getUsers = (): User[] => {
-  if (usersCache !== null && usersCache.length > 0) return usersCache;
+  if (usersCache !== null && usersCache.length > 0) {
+    return [...usersCache];
+  }
   const data = localStorage.getItem(LOCAL_KEYS.USERS);
-  return data ? JSON.parse(data) : [];
+  const parsed = data ? JSON.parse(data) : [];
+  return Array.isArray(parsed) ? [...parsed] : [];
 };
 
 export const saveUser = async (user: User) => {
+  const cleanEmail = user.email.toLowerCase();
+  const cleanUser = cleanUndefinedForFirestore({ ...user, email: cleanEmail });
+
   try {
-    await setDoc(doc(db, COLLECTIONS.USERS, user.email), user, { merge: true });
+    await setDoc(doc(db, COLLECTIONS.USERS, cleanEmail), cleanUser, { merge: true });
   } catch (error) {
     console.error('[NeuroGestor] Erro ao salvar usuário no Firestore:', error);
   }
+
   const users = getUsers();
-  const index = users.findIndex(u => u.email === user.email);
+  const index = users.findIndex(u => u.email.toLowerCase() === cleanEmail);
   if (index >= 0) {
-    users[index] = { ...users[index], ...user };
+    users[index] = { ...users[index], ...user, email: cleanEmail };
   } else {
-    users.push(user);
+    users.push({ ...user, email: cleanEmail });
   }
+
+  usersCache = users.map(u => ({ ...u }));
 
   try {
     localStorage.setItem(LOCAL_KEYS.USERS, JSON.stringify(users));
@@ -698,70 +721,127 @@ export const saveUser = async (user: User) => {
 };
 
 export const updateUserStatus = async (email: string, status: 'APPROVED' | 'DENIED' | 'PENDING') => {
+  const cleanEmail = email.toLowerCase();
   const users = getUsers();
-  const user = users.find(u => u.email === email);
-  if (user) {
-    user.status = status;
-    try {
-      await setDoc(doc(db, COLLECTIONS.USERS, email), { status }, { merge: true });
-    } catch (error) {
-      console.error('[NeuroGestor] Erro ao atualizar status no Firestore:', error);
-    }
+  const index = users.findIndex(u => u.email.toLowerCase() === cleanEmail);
+  if (index >= 0) {
+    users[index] = { ...users[index], status };
+    usersCache = users.map(u => ({ ...u }));
     localStorage.setItem(LOCAL_KEYS.USERS, JSON.stringify(users));
 
     const session = getSession();
-    if (session && session.email === email) {
+    if (session && session.email.toLowerCase() === cleanEmail) {
       setSession({ ...session, status });
+    }
+
+    try {
+      await setDoc(doc(db, COLLECTIONS.USERS, cleanEmail), { status }, { merge: true });
+    } catch (error) {
+      console.error('[NeuroGestor] Erro ao atualizar status no Firestore:', error);
     }
   }
 };
 
 export const updateUserRole = async (email: string, role: User['role']) => {
+  const cleanEmail = email.toLowerCase();
   const users = getUsers();
-  const user = users.find(u => u.email === email);
-  if (user) {
-    user.role = role;
-    try {
-      await setDoc(doc(db, COLLECTIONS.USERS, email), { role }, { merge: true });
-    } catch (error) {
-      console.error('[NeuroGestor] Erro ao atualizar role no Firestore:', error);
-    }
+  const index = users.findIndex(u => u.email.toLowerCase() === cleanEmail);
+  if (index >= 0) {
+    users[index] = { ...users[index], role };
+    usersCache = users.map(u => ({ ...u }));
     localStorage.setItem(LOCAL_KEYS.USERS, JSON.stringify(users));
 
     const session = getSession();
-    if (session && session.email === email) {
+    if (session && session.email.toLowerCase() === cleanEmail) {
       setSession({ ...session, role });
+    }
+
+    try {
+      await setDoc(doc(db, COLLECTIONS.USERS, cleanEmail), { role }, { merge: true });
+    } catch (error) {
+      console.error('[NeuroGestor] Erro ao atualizar role no Firestore:', error);
     }
   }
 };
 
-export const updateUserFcmToken = async (email: string, token: string) => {
+/**
+ * Atualiza especificamente a equipe de um usuário com salvamento imediato e reatividade garantida.
+ */
+export const updateUserTeam = async (email: string, teamId: string, teamName?: string) => {
+  const cleanEmail = email.toLowerCase();
+  const cleanTeamId = teamId || '';
+  const cleanTeamName = teamName || '';
+
   const users = getUsers();
-  const user = users.find(u => u.email === email);
+  const index = users.findIndex(u => u.email.toLowerCase() === cleanEmail);
+  if (index >= 0) {
+    users[index] = {
+      ...users[index],
+      team_id: cleanTeamId || undefined,
+      team_name: cleanTeamName || undefined
+    };
+  }
+
+  // Força atualização da referência de cache na memória
+  usersCache = users.map(u => ({ ...u }));
+
+  try {
+    localStorage.setItem(LOCAL_KEYS.USERS, JSON.stringify(users));
+  } catch (e) {
+    console.warn('[NeuroGestor] Falha ao persistir usuários localmente:', e);
+  }
+
+  const session = getSession();
+  if (session && session.email.toLowerCase() === cleanEmail) {
+    setSession({
+      ...session,
+      team_id: cleanTeamId || undefined,
+      team_name: cleanTeamName || undefined
+    });
+  }
+
+  try {
+    await setDoc(doc(db, COLLECTIONS.USERS, cleanEmail), {
+      team_id: cleanTeamId,
+      team_name: cleanTeamName,
+      updated_at: new Date().toISOString()
+    }, { merge: true });
+    console.log(`[NeuroGestor] ✅ Equipe de ${cleanEmail} salva no Firestore: ${cleanTeamName || 'Sem Equipe'}`);
+  } catch (error) {
+    console.error('[NeuroGestor] Erro ao atualizar equipe no Firestore:', error);
+  }
+};
+
+export const updateUserFcmToken = async (email: string, token: string) => {
+  const cleanEmail = email.toLowerCase();
+  const users = getUsers();
+  const user = users.find(u => u.email.toLowerCase() === cleanEmail);
   if (user) {
     user.fcmToken = token;
     try {
-      await setDoc(doc(db, COLLECTIONS.USERS, email), { fcmToken: token }, { merge: true });
+      await setDoc(doc(db, COLLECTIONS.USERS, cleanEmail), { fcmToken: token }, { merge: true });
     } catch (error) {
       console.error('[NeuroGestor] Erro ao atualizar FCM Token no Firestore:', error);
     }
     localStorage.setItem(LOCAL_KEYS.USERS, JSON.stringify(users));
 
     const session = getSession();
-    if (session && session.email === email) {
+    if (session && session.email.toLowerCase() === cleanEmail) {
       setSession({ ...session, fcmToken: token });
     }
   }
 };
 
 export const deleteUser = async (email: string) => {
+  const cleanEmail = email.toLowerCase();
   try {
-    await deleteDoc(doc(db, COLLECTIONS.USERS, email));
+    await deleteDoc(doc(db, COLLECTIONS.USERS, cleanEmail));
   } catch (error) {
     console.error('[NeuroGestor] Erro ao deletar usuário do Firestore:', error);
   }
   const users = getUsers();
-  const filtered = users.filter(u => u.email !== email);
+  const filtered = users.filter(u => u.email.toLowerCase() !== cleanEmail);
+  usersCache = filtered.map(u => ({ ...u }));
   localStorage.setItem(LOCAL_KEYS.USERS, JSON.stringify(filtered));
 };
 

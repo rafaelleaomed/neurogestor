@@ -1,9 +1,9 @@
 import React, { useState, useEffect, useRef } from 'react';
 import { useNavigate, useParams, useLocation } from 'react-router-dom';
-import { getSurgeries, saveSurgery, getDoctors, addDoctor, getHospitals, addHospital, uploadImage } from '../services/storage';
+import { getSurgeries, saveSurgery, getDoctors, addDoctor, getHospitals, addHospital, uploadImage, getSession } from '../services/storage';
 import { performOCR, generateMnioReport } from '../services/gemini';
 import { Category, Status, Surgery, ComplexityLevel } from '../types';
-import { calculatePrice, getCategoryFromText, learnCategory, compressImage, normalizeName, normalizeDoctorName, normalizeHospitalName, estimateScrews, classifySurgeryProcedure, normalizeCategory } from '../utils';
+import { calculatePrice, formatCurrency, getCategoryFromText, learnCategory, compressImage, normalizeName, normalizeDoctorName, normalizeHospitalName, estimateScrews, classifySurgeryProcedure, normalizeCategory } from '../utils';
 import { SUBTYPES, COMPLEXITY_CONFIG, PORTFOLIO_TAG_SUGGESTIONS, TECNICAS_MNIO, CONDUTAS_ALARME } from '../constants';
 
 const ProcedureForm: React.FC = () => {
@@ -16,6 +16,10 @@ const ProcedureForm: React.FC = () => {
   const simpleFileInputGalleryRef = useRef<HTMLInputElement>(null);
   const reportInputRef = useRef<HTMLInputElement>(null);
   const reportInputGalleryRef = useRef<HTMLInputElement>(null);
+
+  const currentUser = getSession();
+  const configuredConvenios = Object.keys(currentUser?.financial_config?.convenios || {});
+  const availableConvenios = Array.from(new Set([...configuredConvenios, 'Particular', 'Unimed', 'Bradesco Saúde', 'SulAmérica', 'Amil', 'Cassi', 'Allianz', 'Porto Seguro']));
 
   const locationState = location.state as { filterYearSurgeries?: string, filterMonthSurgeries?: string } | null;
   const filterYearSurgeries = locationState?.filterYearSurgeries;
@@ -33,6 +37,7 @@ const ProcedureForm: React.FC = () => {
     subtipo: '',
     medico: '',
     hospital: '',
+    convenio: '',
     observacoes: '',
     status: Status.REALIZADO,
     report_text: '',
@@ -68,6 +73,7 @@ const ProcedureForm: React.FC = () => {
           categoria: normalizeCategory(surgery.categoria),
           label_images: surgery.label_images || [],
           report_images: surgery.report_images || [],
+          convenio: surgery.convenio || '',
           observacoes: surgery.observacoes || surgery.report_text || '',
           valor_personalizado: surgery.valor_personalizado,
           subtipo: surgery.subtipo || '',
@@ -142,6 +148,7 @@ const ProcedureForm: React.FC = () => {
             procedimento: result?.procedimento ? result.procedimento : p.procedimento,
             medico: result?.medico ? result.medico.toUpperCase() : p.medico,
             hospital: result?.hospital ? result.hospital.toUpperCase() : p.hospital,
+            convenio: result?.convenio ? result.convenio : p.convenio,
             data: result?.data ? result.data : p.data,
             categoria: auto ? auto.categoria : (result?.procedimento ? getCategoryFromText(result.procedimento) : p.categoria),
             subtipo: auto?.subtipo ? auto.subtipo : p.subtipo,
@@ -269,10 +276,10 @@ const ProcedureForm: React.FC = () => {
       const normalizedMedico = normalizeDoctorName(formData.medico);
       const normalizedHospital = normalizeHospitalName(formData.hospital);
 
-      // Calcula valor: usa personalizado se ativado, senão calcula automaticamente
+      // Calcula valor: usa personalizado se ativado, senão calcula de acordo com o modelo financeiro do usuário
       const finalPrice = useCustomPrice && formData.valor_personalizado
         ? formData.valor_personalizado
-        : calculatePrice(formData.procedimento, formData.categoria);
+        : calculatePrice(formData.procedimento, formData.categoria, currentUser, formData.convenio);
 
       // Monta o objeto base da cirurgia
       const surgeryBase: Record<string, any> = {
@@ -280,12 +287,17 @@ const ProcedureForm: React.FC = () => {
         ...formData,
         medico: normalizedMedico,
         hospital: normalizedHospital,
+        convenio: formData.convenio ? formData.convenio.trim() : undefined,
         label_images: uploadedLabels,
         report_images: uploadedReports,
         clinical_images: uploadedClinical,
         valor_estimado: finalPrice,
         created_at: id ? getSurgeries().find(s => s.id === id)?.created_at || Date.now() : Date.now()
       };
+
+      if (!surgeryBase.convenio) {
+        delete surgeryBase.convenio;
+      }
 
       // Só inclui valor_personalizado se realmente tiver um valor (Firestore não aceita undefined)
       if (useCustomPrice && formData.valor_personalizado) {
@@ -577,6 +589,30 @@ const ProcedureForm: React.FC = () => {
               <label className="text-[10px] font-black text-slate-400 uppercase tracking-[0.2em] ml-1">Procedimento Realizado</label>
               <input type="text" name="procedimento" value={formData.procedimento} onChange={handleInputChange} placeholder="EX: ARTRODESE C3-C5, MICROVASCULAR..." className="w-full bg-slate-50 dark:bg-slate-800 border-none rounded-2xl p-5 font-bold text-slate-900 dark:text-white shadow-inner focus:ring-2 ring-primary/20 transition-all" required />
             </div>
+            <div className="md:col-span-2 space-y-2">
+              <div className="flex items-center justify-between">
+                <label className="text-[10px] font-black text-slate-400 uppercase tracking-[0.2em] ml-1">Convênio / Fonte Pagadora</label>
+                {formData.convenio && currentUser?.financial_config?.convenios?.[formData.convenio] && (
+                  <span className="text-[11px] font-bold text-emerald-600 dark:text-emerald-400 flex items-center gap-1">
+                    <span className="material-icons text-sm">verified</span>
+                    Tabela configurada: {formatCurrency(currentUser.financial_config.convenios[formData.convenio])}
+                  </span>
+                )}
+              </div>
+              <input
+                list="convenios-list"
+                name="convenio"
+                value={formData.convenio || ''}
+                onChange={handleInputChange}
+                placeholder="Ex: Particular, Unimed, Bradesco Saúde, Amil..."
+                className="w-full bg-slate-50 dark:bg-slate-800 border-none rounded-2xl p-5 font-bold text-slate-900 dark:text-white shadow-inner focus:ring-2 ring-primary/20 transition-all"
+              />
+              <datalist id="convenios-list">
+                {availableConvenios.map(c => (
+                  <option key={c} value={c} />
+                ))}
+              </datalist>
+            </div>
             <div className="space-y-2">
               <label className="text-[10px] font-black text-slate-400 uppercase tracking-[0.2em] ml-1">Médico Responsável (Sem Dr.)</label>
               <input
@@ -838,6 +874,40 @@ const ProcedureForm: React.FC = () => {
                   placeholder="Descreva brevemente o que torna esse caso relevante para seu portfólio..."
                   className="w-full bg-slate-50 dark:bg-slate-800 border-none rounded-2xl p-5 text-sm font-medium text-slate-700 dark:text-slate-300 shadow-inner focus:ring-2 ring-primary/20 transition-all leading-relaxed resize-none"
                 />
+              </div>
+            </div>
+
+            {/* ─── Honorário Estimado Dinâmico ─── */}
+            <div className="md:col-span-2 p-5 rounded-2xl bg-gradient-to-r from-primary/10 via-primary/5 to-transparent border border-primary/20 flex flex-col sm:flex-row sm:items-center justify-between gap-4">
+              <div className="flex items-center gap-3">
+                <div className="w-12 h-12 rounded-xl bg-primary/20 flex items-center justify-center text-primary">
+                  <span className="material-icons text-2xl">payments</span>
+                </div>
+                <div>
+                  <span className="text-[10px] font-black uppercase tracking-widest text-slate-400">Honorário Estimado</span>
+                  <div className="text-2xl font-black text-slate-900 dark:text-white">
+                    {formatCurrency(useCustomPrice && formData.valor_personalizado ? formData.valor_personalizado : calculatePrice(formData.procedimento, formData.categoria, currentUser, formData.convenio))}
+                  </div>
+                </div>
+              </div>
+              <div className="text-xs font-bold text-slate-500 dark:text-slate-400">
+                {useCustomPrice ? (
+                  <span className="inline-flex items-center gap-1 text-amber-600 dark:text-amber-400 bg-amber-50 dark:bg-amber-900/30 px-3 py-1.5 rounded-xl">
+                    <span className="material-icons text-sm">flight</span> Valor de Viagem / Personalizado
+                  </span>
+                ) : formData.convenio && currentUser?.financial_config?.convenios?.[formData.convenio] ? (
+                  <span className="inline-flex items-center gap-1 text-emerald-600 dark:text-emerald-400 bg-emerald-50 dark:bg-emerald-900/30 px-3 py-1.5 rounded-xl">
+                    <span className="material-icons text-sm">price_check</span> Baseado no Convênio ({formData.convenio})
+                  </span>
+                ) : currentUser?.financial_config?.pricing_model === 'fixed_per_surgery' && currentUser.financial_config.fixed_price ? (
+                  <span className="inline-flex items-center gap-1 text-primary bg-primary/10 px-3 py-1.5 rounded-xl">
+                    <span className="material-icons text-sm">tune</span> Valor fixo por cirurgia
+                  </span>
+                ) : (
+                  <span className="inline-flex items-center gap-1 text-slate-600 dark:text-slate-300 bg-slate-100 dark:bg-slate-800 px-3 py-1.5 rounded-xl">
+                    <span className="material-icons text-sm">table_rows</span> Tabela de Categoria ({normalizeCategory(formData.categoria)})
+                  </span>
+                )}
               </div>
             </div>
 

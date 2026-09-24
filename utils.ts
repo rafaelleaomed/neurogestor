@@ -92,13 +92,64 @@ export const normalizeForGrouping = (name: string, type: 'doctor' | 'hospital' =
   }
 };
 
-export const calculatePrice = (procedimento: string, categoria?: Category): number => {
+export const calculatePrice = (
+  procedimento: string,
+  categoria?: Category,
+  user?: User | null,
+  convenio?: string
+): number => {
+  // 1. Se o usuário estiver configurado com modelo 'convenio'
+  if (user?.financial_config?.pricing_model === 'convenio') {
+    const convenios = user.financial_config.convenios || {};
+    const particularPrice = user.financial_config.particular_price;
+
+    if (convenio) {
+      const cleanConv = convenio.trim().toLowerCase();
+      // Checa se é particular
+      if (cleanConv === 'particular' && particularPrice && particularPrice > 0) {
+        return particularPrice;
+      }
+      // Busca no mapa de convênios do usuário (case-insensitive)
+      for (const [key, val] of Object.entries(convenios)) {
+        if (key.toLowerCase() === cleanConv && val > 0) {
+          return val;
+        }
+      }
+      // Se não encontrou o convênio específico, verifica se há regra de "Outros" ou "Outros Convênios"
+      for (const [key, val] of Object.entries(convenios)) {
+        if (key.toLowerCase().includes('outro') && val > 0) {
+          return val;
+        }
+      }
+    }
+    // Fallback do modelo de convênio: usa default_price se existir
+    if (user.financial_config.default_price && user.financial_config.default_price > 0) {
+      return user.financial_config.default_price;
+    }
+  }
+
+  // 2. Se o usuário estiver configurado com modelo de valor fixo 'fixed'
+  if (user?.financial_config?.pricing_model === 'fixed') {
+    if (user.financial_config.default_price && user.financial_config.default_price > 0) {
+      return user.financial_config.default_price;
+    }
+  }
+
+  // 3. Se o usuário estiver configurado com modelo 'category'
+  if (user?.financial_config?.pricing_model === 'category') {
+    const catPricing = user.financial_config.category_pricing;
+    if (catPricing && categoria && catPricing[categoria] && catPricing[categoria]! > 0) {
+      return catPricing[categoria]!;
+    }
+  }
+
+  // 4. Modelo Histórico / Legacy (Equipe Camarinha) ou padrão quando o usuário não tiver tabela customizada
   // Override de Categoria: Se o usuário selecionou Nervo Periférico explicitly, o preço base é 800
   if (categoria === Category.NERVO_PERIFERICO) {
     return PRICING.PERIPHERAL;
   }
 
-  const p = procedimento.toLowerCase();
+  const p = (procedimento || '').toLowerCase();
 
   // Regra de Tumor de Nervo
   const isTumor = TUMOR_KEYWORDS.every(key => p.includes(key));

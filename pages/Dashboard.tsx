@@ -1,13 +1,13 @@
 import React, { useState, useMemo, useRef, useEffect } from 'react';
 import { useNavigate, useLocation } from 'react-router-dom';
 import { BarChart, Bar, XAxis, YAxis, CartesianGrid, Tooltip, ResponsiveContainer, PieChart, Pie, Cell, AreaChart, Area, Legend } from 'recharts';
-import { getSession, getSurgeries, saveSurgery, deleteSurgery, getUsers, saveSurgeriesBatch, deleteSurgeriesBatch, updateUserStatus, updateUserRole, deleteUser, updateUserFcmToken } from '../services/storage';
+import { getSession, getSurgeries, saveSurgery, deleteSurgery, getUsers, saveUser, saveSurgeriesBatch, deleteSurgeriesBatch, updateUserStatus, updateUserRole, updateUserTeam, deleteUser, updateUserFcmToken } from '../services/storage';
 import { performBatchLabelsOCR, mapSpreadsheetWithAI } from '../services/gemini';
 import { messaging } from '../services/firebase';
 import { getToken } from 'firebase/messaging';
 
 import { Surgery, Category, User } from '../types';
-import { ADMIN_EMAIL, COMPLEXITY_CONFIG } from '../constants';
+import { ADMIN_EMAIL, ADMIN_EMAILS, MASTER_ADMIN_EMAIL, isAdminUser, isMasterAdmin, AVAILABLE_TEAMS, COMPLEXITY_CONFIG } from '../constants';
 import { DocumentsTab } from './DocumentsTab';
 import PortfolioTab from '../components/PortfolioTab';
 import { formatCurrency, formatDate, exportToExcel, parseExcelFile, getCategoryFromText, normalizeForGrouping, compressImage, estimateScrews, normalizeCategory } from '../utils';
@@ -26,16 +26,45 @@ const Dashboard: React.FC<{ onLogout: () => void }> = ({ onLogout }) => {
     (location.state as any)?.activeTab || 'overview'
   );
 
-  const isAdmin = currentUser?.email?.toLowerCase() === ADMIN_EMAIL.toLowerCase() || currentUser?.role === 'admin' || currentUser?.role === 'owner';
+  const isAdmin = isAdminUser(currentUser?.email) || currentUser?.role === 'admin' || currentUser?.role === 'owner';
   const isAssistant = currentUser?.role === 'assistant';
-  const isOwner = currentUser?.email?.toLowerCase() === ADMIN_EMAIL.toLowerCase() || currentUser?.role === 'owner';
-  const isAdminEmail = currentUser?.email?.toLowerCase() === ADMIN_EMAIL.toLowerCase();
+  const isOwner = isMasterAdmin(currentUser?.email) || currentUser?.role === 'owner';
+  const isAdminEmail = isAdminUser(currentUser?.email);
+  const canViewEnterprise = currentUser?.email?.toLowerCase() === 'medleaobh@gmail.com';
 
   const [viewScope, setViewScope] = useState<'personal' | 'global'>('personal');
   const [metricMode, setMetricMode] = useState<'revenue' | 'volume'>(isAssistant ? 'volume' : 'revenue');
 
   const [viewingEmail, setViewingEmail] = useState<string | null>(null);
   const [allUsers, setAllUsers] = useState<User[]>(getUsers());
+  const [actionToast, setActionToast] = useState<{ message: string; type: 'success' | 'error' } | null>(null);
+
+  const showToast = (message: string, type: 'success' | 'error' = 'success') => {
+    setActionToast({ message, type });
+    setTimeout(() => setActionToast(null), 3500);
+  };
+
+  const handleAssignTeam = async (userEmail: string, teamId: string, userName?: string) => {
+    try {
+      const selectedTeam = AVAILABLE_TEAMS.find(t => t.id === teamId);
+      const teamName = selectedTeam ? selectedTeam.name : '';
+      await updateUserTeam(userEmail, teamId, teamName);
+      refreshData();
+      showToast(
+        teamId 
+          ? `${userName || userEmail} associado(a) à ${teamName} com sucesso!` 
+          : `${userName || userEmail} removido(a) da equipe.`,
+        'success'
+      );
+    } catch (err) {
+      console.error('Erro ao atualizar equipe:', err);
+      showToast('Erro ao atualizar equipe. Tente novamente.', 'error');
+    }
+  };
+
+  const pendingUsersCount = useMemo(() => {
+    return allUsers.filter(u => u.status === 'PENDING').length;
+  }, [allUsers]);
 
   const [surgeries, setSurgeries] = useState<Surgery[]>(getSurgeries());
 
@@ -107,12 +136,10 @@ const Dashboard: React.FC<{ onLogout: () => void }> = ({ onLogout }) => {
     }
   };
 
-
-
   // Recarrega cirurgias sempre que a aba mudar ou após ações
   const refreshData = () => {
-    setSurgeries(getSurgeries());
-    setAllUsers(getUsers());
+    setSurgeries([...getSurgeries()]);
+    setAllUsers([...getUsers()]);
   };
 
   /**
@@ -862,8 +889,8 @@ const Dashboard: React.FC<{ onLogout: () => void }> = ({ onLogout }) => {
         <header className="bg-white/95 dark:bg-slate-900/95 backdrop-blur-xl sticky top-0 z-40 border-b border-slate-100 dark:border-slate-800 px-3 sm:px-6 py-2.5 sm:py-4">
           <div className="max-w-7xl mx-auto flex items-center justify-between gap-1 sm:gap-4">
             <div className="flex items-center space-x-2 sm:space-x-4 min-w-0">
-              <div className="w-8 h-8 sm:w-10 sm:h-10 flex items-center justify-center flex-shrink-0">
-                <img src="/logo.png" alt="NeuroGestor Logo" className="w-full h-full object-contain" />
+              <div className="w-10 h-10 sm:w-12 sm:h-12 flex items-center justify-center flex-shrink-0">
+                <img src="/logo.png" alt="NeuroGestor Logo" className="w-full h-full object-contain drop-shadow-sm" />
               </div>
               <span className="text-base sm:text-2xl font-black text-slate-900 dark:text-white tracking-tight truncate">NeuroGestor</span>
               {/* Desktop nav - hidden on mobile */}
@@ -873,18 +900,25 @@ const Dashboard: React.FC<{ onLogout: () => void }> = ({ onLogout }) => {
                 <button onClick={() => setActiveTab('portfolio')} className={`px-6 py-2 rounded-xl text-xs font-black transition-all ${activeTab === 'portfolio' ? 'bg-white dark:bg-slate-700 shadow-sm text-primary' : 'text-slate-500 hover:text-slate-700'}`}>Portfólio</button>
                 <button onClick={() => setActiveTab('documents')} className={`px-6 py-2 rounded-xl text-xs font-black transition-all ${activeTab === 'documents' ? 'bg-white dark:bg-slate-700 shadow-sm text-primary' : 'text-slate-500 hover:text-slate-700'}`}>Documentos</button>
                 {isAdmin && (
-                  <button onClick={() => setActiveTab('users')} className={`px-6 py-2 rounded-xl text-xs font-black transition-all ${activeTab === 'users' ? 'bg-white dark:bg-slate-700 shadow-sm text-primary' : 'text-slate-500 hover:text-slate-700'}`}>Usuários</button>
+                  <button onClick={() => setActiveTab('users')} className={`px-6 py-2 rounded-xl text-xs font-black transition-all flex items-center gap-2 ${activeTab === 'users' ? 'bg-white dark:bg-slate-700 shadow-sm text-primary' : 'text-slate-500 hover:text-slate-700'}`}>
+                    <span>Usuários</span>
+                    {pendingUsersCount > 0 && (
+                      <span className="px-2 py-0.5 bg-rose-500 text-white rounded-full text-[10px] font-black animate-pulse">
+                        {pendingUsersCount}
+                      </span>
+                    )}
+                  </button>
                 )}
-                {(isOwner || isAdminEmail) && (
+                {canViewEnterprise && (
                   <button onClick={() => navigate('/admin')} className="px-6 py-2 rounded-xl text-xs font-black transition-all text-white bg-indigo-600 hover:bg-indigo-700 shadow-lg shadow-indigo-200 dark:shadow-none ml-2">ADMIN PANEL</button>
                 )}
               </nav>
             </div>
             <div className="flex items-center space-x-0.5 sm:space-x-3 flex-shrink-0">
-              {(currentUser?.email?.toLowerCase() === ADMIN_EMAIL.toLowerCase() || currentUser?.role === 'owner' || currentUser?.role === 'admin') && (
+              {canViewEnterprise && (
                 <button
                   onClick={() => navigate('/admin')}
-                  title="Painel de Gestão"
+                  title="Painel de Gestão Master"
                   className="p-1.5 sm:p-2 text-indigo-500 hover:text-indigo-700 hover:bg-indigo-50 dark:hover:bg-indigo-950/40 rounded-xl transition-all flex-shrink-0"
                 >
                   <span className="material-icons text-xl sm:text-2xl">admin_panel_settings</span>
@@ -894,9 +928,12 @@ const Dashboard: React.FC<{ onLogout: () => void }> = ({ onLogout }) => {
                 <button
                   onClick={() => setActiveTab('users')}
                   title="Gestão de Usuários"
-                  className={`p-1.5 sm:p-2 transition-all rounded-xl flex-shrink-0 ${activeTab === 'users' ? 'text-primary bg-primary/10' : 'text-slate-400 hover:text-slate-600 hover:bg-slate-100 dark:hover:bg-slate-800'}`}
+                  className={`relative p-1.5 sm:p-2 transition-all rounded-xl flex-shrink-0 ${activeTab === 'users' ? 'text-primary bg-primary/10' : 'text-slate-400 hover:text-slate-600 hover:bg-slate-100 dark:hover:bg-slate-800'}`}
                 >
                   <span className="material-icons text-xl sm:text-2xl">people</span>
+                  {pendingUsersCount > 0 && (
+                    <span className="absolute top-1 right-1 w-2.5 h-2.5 bg-rose-500 rounded-full animate-ping" />
+                  )}
                 </button>
               )}
               <button onClick={() => setIsSettingsOpen(true)} title="Configurações" className="p-1.5 sm:p-2 text-slate-400 hover:text-primary hover:bg-slate-100 dark:hover:bg-slate-800 rounded-xl transition-all flex-shrink-0">
@@ -1033,6 +1070,32 @@ const Dashboard: React.FC<{ onLogout: () => void }> = ({ onLogout }) => {
 
           {activeTab === 'overview' && (
             <div className="space-y-12 animate-in fade-in duration-500">
+              {/* Banner de Notificação de Novos Usuários Aguardando Aprovação */}
+              {isAdmin && pendingUsersCount > 0 && (
+                <div className="bg-gradient-to-r from-amber-500/15 via-amber-500/10 to-transparent border border-amber-500/30 rounded-3xl p-5 sm:p-6 flex flex-col sm:flex-row sm:items-center justify-between gap-4 shadow-sm animate-in fade-in duration-500">
+                  <div className="flex items-center gap-4">
+                    <div className="w-12 h-12 rounded-2xl bg-amber-500/20 text-amber-600 dark:text-amber-400 flex items-center justify-center flex-shrink-0 animate-pulse">
+                      <span className="material-icons text-2xl">hourglass_top</span>
+                    </div>
+                    <div>
+                      <h4 className="text-sm sm:text-base font-black text-slate-900 dark:text-white uppercase tracking-wider">
+                        {pendingUsersCount === 1 ? '1 Novo Usuário Aguardando Aprovação' : `${pendingUsersCount} Novos Usuários Aguardando Aprovação`}
+                      </h4>
+                      <p className="text-xs text-slate-500 dark:text-slate-400 font-medium mt-0.5">
+                        Novos profissionais solicitaram acesso ao sistema e aguardam liberação no cadastro.
+                      </p>
+                    </div>
+                  </div>
+                  <button
+                    onClick={() => setActiveTab('users')}
+                    className="px-6 py-3 bg-amber-500 hover:bg-amber-600 text-white font-black text-xs uppercase tracking-widest rounded-2xl transition-all shadow-lg shadow-amber-500/20 active:scale-95 flex items-center justify-center gap-2 flex-shrink-0 cursor-pointer"
+                  >
+                    <span className="material-icons text-sm">manage_accounts</span>
+                    Gerenciar Acessos
+                  </button>
+                </div>
+              )}
+
               {/* Stats Cards */}
               <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-5 gap-4 sm:gap-6">
 
@@ -1158,7 +1221,7 @@ const Dashboard: React.FC<{ onLogout: () => void }> = ({ onLogout }) => {
                       <span className="w-2 h-6 bg-primary rounded-full"></span> Crescimento Mensal
                     </h3>
                     <div className="flex items-center gap-2 overflow-x-auto no-scrollbar">
-                      {isOwner && (
+                      {canViewEnterprise && (
                         <div className="flex bg-slate-100 dark:bg-slate-800 p-1 rounded-2xl mr-1 flex-shrink-0">
                           <button onClick={() => setViewScope('personal')} className={`px-3 py-1.5 rounded-xl text-[9px] font-black uppercase tracking-wider transition-all whitespace-nowrap ${viewScope === 'personal' ? 'bg-white dark:bg-slate-700 shadow-sm text-primary' : 'text-slate-500 hover:text-slate-700'}`}>Pessoal</button>
                           <button onClick={() => setViewScope('global')} className={`px-3 py-1.5 rounded-xl text-[9px] font-black uppercase tracking-wider transition-all whitespace-nowrap ${viewScope === 'global' ? 'bg-white dark:bg-slate-700 shadow-sm text-primary' : 'text-slate-500 hover:text-slate-700'}`}>Empresa</button>
@@ -2242,17 +2305,50 @@ const Dashboard: React.FC<{ onLogout: () => void }> = ({ onLogout }) => {
         {/* Documents Tab */}
         {activeTab === 'documents' && (
           <div className="max-w-7xl mx-auto px-6 py-10 space-y-10 animate-in fade-in duration-500 mb-24 md:mb-0">
-            <DocumentsTab isDarkMode={isDarkMode} />
+            <DocumentsTab isDarkMode={isDarkMode} currentUser={currentUser} />
           </div>
         )}
 
         {/* Users Tab (Admin Only) */}
         {activeTab === 'users' && isAdmin && (
-          <div className="max-w-7xl mx-auto px-6 py-10 space-y-10 animate-in fade-in duration-500 mb-24 md:mb-0">
+          <div className="max-w-7xl mx-auto px-6 py-10 space-y-8 animate-in fade-in duration-500 mb-24 md:mb-0">
             <div className="flex flex-col md:flex-row md:items-end justify-between gap-6">
               <div>
                 <h2 className="text-4xl font-black text-slate-900 dark:text-white uppercase tracking-tight leading-tight">Gestão de Usuários</h2>
-                <p className="text-slate-500 font-bold uppercase text-[10px] tracking-[0.2em] mt-2">Aprove, negue ou gerencie acessos da plataforma</p>
+                <p className="text-slate-500 font-bold uppercase text-[10px] tracking-[0.2em] mt-2">Aprove, negue, gerencie equipes e acessos da plataforma</p>
+              </div>
+            </div>
+
+            {/* Quick Stats Grid */}
+            <div className="grid grid-cols-2 sm:grid-cols-4 gap-4">
+              <div className="bg-white/40 dark:bg-slate-800/40 backdrop-blur-xl p-5 rounded-3xl border border-white/20 dark:border-slate-700/30 shadow-lg">
+                <p className="text-[10px] font-black text-slate-400 uppercase tracking-widest">Total Usuários</p>
+                <p className="text-2xl font-black text-slate-900 dark:text-white mt-1">{allUsers.length}</p>
+              </div>
+              <div className="bg-white/40 dark:bg-slate-800/40 backdrop-blur-xl p-5 rounded-3xl border border-white/20 dark:border-slate-700/30 shadow-lg">
+                <p className="text-[10px] font-black text-emerald-500 uppercase tracking-widest">Aprovados</p>
+                <p className="text-2xl font-black text-emerald-600 dark:text-emerald-400 mt-1">{allUsers.filter(u => u.status === 'APPROVED').length}</p>
+              </div>
+              <div className={`p-5 rounded-3xl border shadow-lg backdrop-blur-xl transition-all ${
+                pendingUsersCount > 0 
+                  ? 'bg-amber-500/10 border-amber-500/30 text-amber-500' 
+                  : 'bg-white/40 dark:bg-slate-800/40 border-white/20 dark:border-slate-700/30 text-slate-400'
+              }`}>
+                <div className="flex items-center justify-between">
+                  <p className="text-[10px] font-black uppercase tracking-widest">Pendentes</p>
+                  {pendingUsersCount > 0 && (
+                    <span className="w-2 h-2 rounded-full bg-amber-500 animate-ping" />
+                  )}
+                </div>
+                <p className={`text-2xl font-black mt-1 ${pendingUsersCount > 0 ? 'text-amber-500' : 'text-slate-900 dark:text-white'}`}>
+                  {pendingUsersCount}
+                </p>
+              </div>
+              <div className="bg-white/40 dark:bg-slate-800/40 backdrop-blur-xl p-5 rounded-3xl border border-white/20 dark:border-slate-700/30 shadow-lg">
+                <p className="text-[10px] font-black text-primary uppercase tracking-widest">Equipe Camarinha</p>
+                <p className="text-2xl font-black text-primary mt-1">
+                  {allUsers.filter(u => u.team_id === 'camarinha').length}
+                </p>
               </div>
             </div>
 
@@ -2264,6 +2360,7 @@ const Dashboard: React.FC<{ onLogout: () => void }> = ({ onLogout }) => {
                     <tr className="border-b border-slate-100 dark:border-slate-700/50">
                       <th className="px-8 py-6 text-[10px] font-black text-slate-400 uppercase tracking-widest">Usuário</th>
                       <th className="px-8 py-6 text-[10px] font-black text-slate-400 uppercase tracking-widest">Status & Acesso</th>
+                      <th className="px-8 py-6 text-[10px] font-black text-slate-400 uppercase tracking-widest">Equipe</th>
                       <th className="px-8 py-6 text-[10px] font-black text-slate-400 uppercase tracking-widest text-right">Ações</th>
                     </tr>
                   </thead>
@@ -2272,12 +2369,15 @@ const Dashboard: React.FC<{ onLogout: () => void }> = ({ onLogout }) => {
                       <tr key={u.email} className="group hover:bg-white/60 dark:hover:bg-slate-800/60 transition-all">
                         <td className="px-8 py-6">
                           <div className="flex items-center gap-4">
-                            <div className="w-12 h-12 rounded-2xl overflow-hidden border-2 border-slate-100 dark:border-slate-700 shadow-sm">
+                            <div className="w-12 h-12 rounded-2xl overflow-hidden border-2 border-slate-100 dark:border-slate-700 shadow-sm flex-shrink-0">
                               <img src={u.picture || `https://ui-avatars.com/api/?name=${u.name}&background=135bec&color=fff`} className="w-full h-full object-cover" />
                             </div>
                             <div>
                               <p className="font-black text-slate-900 dark:text-white uppercase text-sm tracking-tight">{u.name}</p>
                               <p className="text-[10px] text-slate-500 font-bold">{u.email}</p>
+                              {u.crm && (
+                                <p className="text-[9px] text-primary font-black mt-0.5 tracking-wider">CRM: {u.crm}</p>
+                              )}
                             </div>
                           </div>
                         </td>
@@ -2300,6 +2400,40 @@ const Dashboard: React.FC<{ onLogout: () => void }> = ({ onLogout }) => {
                             </select>
                           </div>
                         </td>
+                        <td className="px-8 py-6">
+                          <div className="flex flex-col gap-1.5">
+                            <select
+                              className={`text-xs font-bold px-3 py-1.5 rounded-xl border outline-none w-fit transition-all cursor-pointer ${
+                                u.team_id === 'camarinha'
+                                  ? 'bg-primary/10 border-primary/40 text-primary font-black'
+                                  : 'bg-slate-50 dark:bg-slate-900/50 text-slate-700 dark:text-slate-300 border-slate-200 dark:border-slate-700'
+                              }`}
+                              value={u.team_id || ''}
+                              onChange={async (e) => {
+                                await handleAssignTeam(u.email, e.target.value, u.name);
+                              }}
+                            >
+                              <option value="">Sem Equipe</option>
+                              {AVAILABLE_TEAMS.map(team => (
+                                <option key={team.id} value={team.id}>{team.name}</option>
+                              ))}
+                            </select>
+                            {u.team_id === 'camarinha' ? (
+                              <span className="text-[9px] font-black text-primary tracking-wider uppercase flex items-center gap-1">
+                                <span className="material-icons text-[11px]">verified_user</span> Acesso a Senhas
+                              </span>
+                            ) : (
+                              <button
+                                onClick={async () => {
+                                  await handleAssignTeam(u.email, 'camarinha', u.name);
+                                }}
+                                className="w-fit text-[9px] font-black text-primary hover:underline uppercase tracking-wider flex items-center gap-1 cursor-pointer"
+                              >
+                                <span className="material-icons text-[11px]">group_add</span> + Add Camarinha
+                              </button>
+                            )}
+                          </div>
+                        </td>
                         <td className="px-8 py-6 text-right">
                           <div className="flex items-center justify-end gap-2 outline-none">
                             <button
@@ -2309,9 +2443,30 @@ const Dashboard: React.FC<{ onLogout: () => void }> = ({ onLogout }) => {
                             >
                               <span className="material-icons text-sm">visibility</span>
                             </button>
+                            {/* Botão de Alternância de Equipe Rápido */}
+                            <button
+                              onClick={async () => {
+                                const nextTeam = u.team_id === 'camarinha' ? '' : 'camarinha';
+                                await handleAssignTeam(u.email, nextTeam, u.name);
+                              }}
+                              className={`w-10 h-10 flex items-center justify-center rounded-xl transition-all shadow-sm ${
+                                u.team_id === 'camarinha'
+                                  ? 'bg-primary text-white shadow-primary/20 hover:bg-primary/90'
+                                  : 'bg-indigo-50 dark:bg-indigo-950/40 text-indigo-600 dark:text-indigo-400 hover:bg-primary hover:text-white'
+                              }`}
+                              title={u.team_id === 'camarinha' ? 'Membro da Equipe Camarinha (Clique para remover)' : 'Adicionar à Equipe Camarinha'}
+                            >
+                              <span className="material-icons text-sm">
+                                {u.team_id === 'camarinha' ? 'verified_user' : 'group_add'}
+                              </span>
+                            </button>
                             {u.status !== 'APPROVED' && (
                               <button
-                                onClick={async () => { await updateUserStatus(u.email, 'APPROVED'); refreshData(); }}
+                                onClick={async () => { 
+                                  await updateUserStatus(u.email, 'APPROVED'); 
+                                  refreshData(); 
+                                  showToast(`${u.name} aprovado com sucesso!`);
+                                }}
                                 className="w-10 h-10 flex items-center justify-center rounded-xl bg-emerald-100 text-emerald-600 hover:bg-emerald-600 hover:text-white transition-all shadow-sm"
                                 title="Aprovar"
                               >
@@ -2320,7 +2475,11 @@ const Dashboard: React.FC<{ onLogout: () => void }> = ({ onLogout }) => {
                             )}
                             {u.status !== 'DENIED' && (
                               <button
-                                onClick={async () => { await updateUserStatus(u.email, 'DENIED'); refreshData(); }}
+                                onClick={async () => { 
+                                  await updateUserStatus(u.email, 'DENIED'); 
+                                  refreshData(); 
+                                  showToast(`${u.name} acesso negado.`);
+                                }}
                                 className="w-10 h-10 flex items-center justify-center rounded-xl bg-amber-100 text-amber-600 hover:bg-amber-600 hover:text-white transition-all shadow-sm"
                                 title="Negar"
                               >
@@ -2328,7 +2487,13 @@ const Dashboard: React.FC<{ onLogout: () => void }> = ({ onLogout }) => {
                               </button>
                             )}
                             <button
-                              onClick={async () => { if (confirm(`Excluir usuário ${u.name}?`)) { await deleteUser(u.email); refreshData(); } }}
+                              onClick={async () => { 
+                                if (confirm(`Excluir usuário ${u.name}?`)) { 
+                                  await deleteUser(u.email); 
+                                  refreshData(); 
+                                  showToast(`Usuário ${u.name} excluído.`);
+                                } 
+                              }}
                               className="w-10 h-10 flex items-center justify-center rounded-xl bg-rose-100 text-rose-600 hover:bg-rose-600 hover:text-white transition-all shadow-sm"
                               title="Excluir"
                             >
@@ -2353,6 +2518,9 @@ const Dashboard: React.FC<{ onLogout: () => void }> = ({ onLogout }) => {
                       <div className="min-w-0 flex-1">
                         <p className="font-black text-slate-900 dark:text-white uppercase text-sm tracking-tight truncate">{u.name}</p>
                         <p className="text-[10px] text-slate-500 font-bold truncate">{u.email}</p>
+                        {u.crm && (
+                          <p className="text-[9px] text-primary font-black mt-0.5 tracking-wider">CRM: {u.crm}</p>
+                        )}
                       </div>
                       <div>
                         <span className={`px-3 py-1 rounded-full text-[9px] font-black uppercase tracking-widest ${u.status === 'APPROVED' ? 'bg-emerald-100 text-emerald-700' : u.status === 'DENIED' ? 'bg-rose-100 text-rose-700' : 'bg-amber-100 text-amber-700'}`}>
@@ -2361,19 +2529,71 @@ const Dashboard: React.FC<{ onLogout: () => void }> = ({ onLogout }) => {
                       </div>
                     </div>
 
-                    <div className="flex flex-col gap-2 mt-2">
-                      <label className="text-[10px] font-black text-slate-400 uppercase tracking-widest">Nível de Acesso</label>
-                      <select
-                        className="bg-slate-50 dark:bg-slate-900/50 text-slate-700 dark:text-slate-300 text-xs font-bold px-3 py-2 rounded-xl border border-slate-200 dark:border-slate-700 outline-none w-full appearance-none"
-                        value={u.role || 'user'}
-                        onChange={async (e) => {
-                          await updateUserRole(u.email, e.target.value as 'user' | 'admin');
-                          refreshData();
-                        }}
-                      >
-                        <option value="user">Usuário Padrão</option>
-                        <option value="admin">Administrador</option>
-                      </select>
+                    <div className="grid grid-cols-2 gap-3 mt-2">
+                      <div className="flex flex-col gap-1.5">
+                        <label className="text-[10px] font-black text-slate-400 uppercase tracking-widest">Nível de Acesso</label>
+                        <select
+                          className="bg-slate-50 dark:bg-slate-900/50 text-slate-700 dark:text-slate-300 text-xs font-bold px-3 py-2 rounded-xl border border-slate-200 dark:border-slate-700 outline-none w-full"
+                          value={u.role || 'user'}
+                          onChange={async (e) => {
+                            await updateUserRole(u.email, e.target.value as 'user' | 'admin');
+                            refreshData();
+                            showToast(`Nível de ${u.name} alterado.`);
+                          }}
+                        >
+                          <option value="user">Usuário Padrão</option>
+                          <option value="admin">Administrador</option>
+                        </select>
+                      </div>
+
+                      <div className="flex flex-col gap-1.5">
+                        <label className="text-[10px] font-black text-slate-400 uppercase tracking-widest">Equipe</label>
+                        <select
+                          className={`text-xs font-bold px-3 py-2 rounded-xl border outline-none w-full transition-all cursor-pointer ${
+                            u.team_id === 'camarinha'
+                              ? 'bg-primary/10 border-primary/40 text-primary font-black'
+                              : 'bg-slate-50 dark:bg-slate-900/50 text-slate-700 dark:text-slate-300 border-slate-200 dark:border-slate-700'
+                          }`}
+                          value={u.team_id || ''}
+                          onChange={async (e) => {
+                            await handleAssignTeam(u.email, e.target.value, u.name);
+                          }}
+                        >
+                          <option value="">Sem Equipe</option>
+                          {AVAILABLE_TEAMS.map(team => (
+                            <option key={team.id} value={team.id}>{team.name}</option>
+                          ))}
+                        </select>
+                      </div>
+                    </div>
+
+                    {/* Botão de Destaque para Ação Rápida de Equipe no Mobile */}
+                    <div className="mt-1">
+                      {u.team_id === 'camarinha' ? (
+                        <div className="flex items-center justify-between px-3.5 py-2.5 bg-primary/10 border border-primary/30 rounded-xl">
+                          <span className="text-[10px] font-black text-primary uppercase tracking-widest flex items-center gap-1.5">
+                            <span className="material-icons text-xs">verified_user</span> Equipe Camarinha
+                          </span>
+                          <button
+                            onClick={async () => {
+                              await handleAssignTeam(u.email, '', u.name);
+                            }}
+                            className="text-[9px] font-black text-slate-400 hover:text-rose-500 uppercase tracking-widest cursor-pointer px-2 py-1 rounded-lg hover:bg-white/50"
+                          >
+                            Remover
+                          </button>
+                        </div>
+                      ) : (
+                        <button
+                          onClick={async () => {
+                            await handleAssignTeam(u.email, 'camarinha', u.name);
+                          }}
+                          className="w-full flex items-center justify-center gap-2 py-2.5 px-4 rounded-xl bg-primary text-white text-xs font-black shadow-md shadow-primary/25 hover:bg-primary/95 active:scale-[0.98] transition-all cursor-pointer uppercase tracking-wider"
+                        >
+                          <span className="material-icons text-base">group_add</span>
+                          <span>Adicionar à Equipe Camarinha</span>
+                        </button>
+                      )}
                     </div>
 
                     <div className="flex items-center justify-end gap-2 outline-none mt-2 pt-4 border-t border-slate-100 dark:border-slate-700">
@@ -2384,9 +2604,30 @@ const Dashboard: React.FC<{ onLogout: () => void }> = ({ onLogout }) => {
                       >
                         <span className="material-icons text-sm">visibility</span>
                       </button>
+                      {/* Botão rápido de equipe no mobile */}
+                      <button
+                        onClick={async () => {
+                          const nextTeam = u.team_id === 'camarinha' ? '' : 'camarinha';
+                          await handleAssignTeam(u.email, nextTeam, u.name);
+                        }}
+                        className={`flex-1 h-10 flex items-center justify-center rounded-xl transition-all shadow-sm ${
+                          u.team_id === 'camarinha'
+                            ? 'bg-primary text-white shadow-primary/20'
+                            : 'bg-indigo-50 dark:bg-indigo-950/40 text-indigo-600 dark:text-indigo-400 hover:bg-primary hover:text-white'
+                        }`}
+                        title={u.team_id === 'camarinha' ? 'Remover da Equipe Camarinha' : 'Adicionar à Equipe Camarinha'}
+                      >
+                        <span className="material-icons text-sm">
+                          {u.team_id === 'camarinha' ? 'verified_user' : 'group_add'}
+                        </span>
+                      </button>
                       {u.status !== 'APPROVED' && (
                         <button
-                          onClick={async () => { await updateUserStatus(u.email, 'APPROVED'); refreshData(); }}
+                          onClick={async () => { 
+                            await updateUserStatus(u.email, 'APPROVED'); 
+                            refreshData(); 
+                            showToast(`${u.name} aprovado!`);
+                          }}
                           className="flex-1 h-10 flex items-center justify-center rounded-xl bg-emerald-100 text-emerald-600 hover:bg-emerald-600 hover:text-white transition-all shadow-sm"
                           title="Aprovar"
                         >
@@ -2395,7 +2636,11 @@ const Dashboard: React.FC<{ onLogout: () => void }> = ({ onLogout }) => {
                       )}
                       {u.status !== 'DENIED' && (
                         <button
-                          onClick={async () => { await updateUserStatus(u.email, 'DENIED'); refreshData(); }}
+                          onClick={async () => { 
+                            await updateUserStatus(u.email, 'DENIED'); 
+                            refreshData(); 
+                            showToast(`${u.name} acesso negado.`);
+                          }}
                           className="flex-1 h-10 flex items-center justify-center rounded-xl bg-amber-100 text-amber-600 hover:bg-amber-600 hover:text-white transition-all shadow-sm"
                           title="Negar"
                         >
@@ -2403,7 +2648,13 @@ const Dashboard: React.FC<{ onLogout: () => void }> = ({ onLogout }) => {
                         </button>
                       )}
                       <button
-                        onClick={async () => { if (confirm(`Excluir usuário ${u.name}?`)) { await deleteUser(u.email); refreshData(); } }}
+                        onClick={async () => { 
+                          if (confirm(`Excluir usuário ${u.name}?`)) { 
+                            await deleteUser(u.email); 
+                            refreshData(); 
+                            showToast(`Usuário ${u.name} excluído.`);
+                          } 
+                        }}
                         className="flex-1 h-10 flex items-center justify-center rounded-xl bg-rose-100 text-rose-600 hover:bg-rose-600 hover:text-white transition-all shadow-sm"
                         title="Excluir"
                       >
@@ -2415,10 +2666,25 @@ const Dashboard: React.FC<{ onLogout: () => void }> = ({ onLogout }) => {
               </div>
             </div>
           </div>
-        )
-        }
-      </div >
-    </div >
+        )}
+
+        {/* Floating Toast Notification */}
+        {actionToast && (
+          <div className="fixed bottom-24 md:bottom-8 right-6 z-50 animate-in fade-in slide-in-from-bottom duration-300">
+            <div className={`px-5 py-3.5 rounded-2xl shadow-2xl backdrop-blur-xl border flex items-center gap-3 ${
+              actionToast.type === 'success' 
+                ? 'bg-slate-900/95 dark:bg-white/95 text-white dark:text-slate-900 border-primary/40 shadow-primary/20' 
+                : 'bg-rose-600 text-white border-rose-400 shadow-rose-600/30'
+            }`}>
+              <span className="material-icons text-xl text-primary">
+                {actionToast.type === 'success' ? 'check_circle' : 'error'}
+              </span>
+              <p className="text-xs font-black tracking-wide">{actionToast.message}</p>
+            </div>
+          </div>
+        )}
+      </div>
+    </div>
   );
 };
 

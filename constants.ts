@@ -1,7 +1,24 @@
 
 import { Category } from './types';
 
-export const ADMIN_EMAIL = 'rafaelleaobh@gmail.com';
+export const MASTER_ADMIN_EMAIL = 'medleaobh@gmail.com';
+export const ADMIN_EMAILS = ['medleaobh@gmail.com', 'rafaelleaobh@gmail.com'];
+export const ADMIN_EMAIL = 'medleaobh@gmail.com';
+
+export const isMasterAdmin = (email?: string | null): boolean => {
+  if (!email) return false;
+  return email.toLowerCase().trim() === MASTER_ADMIN_EMAIL.toLowerCase();
+};
+
+export const isAdminUser = (email?: string | null): boolean => {
+  if (!email) return false;
+  const e = email.toLowerCase().trim();
+  return ADMIN_EMAILS.some(admin => admin.toLowerCase() === e);
+};
+
+export const AVAILABLE_TEAMS = [
+  { id: 'camarinha', name: 'Equipe Camarinha' }
+];
 
 export const SEED_DOCTORS = [
   'ALEXANDRE DE RESENDE',

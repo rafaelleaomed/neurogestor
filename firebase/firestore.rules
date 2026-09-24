@@ -17,7 +17,8 @@ service cloud.firestore {
       return isAuthenticated() && 
         (request.auth.token.role == 'admin' || 
          request.auth.token.role == 'owner' || 
-         request.auth.token.email == 'rafaelleaobh@gmail.com');
+         request.auth.token.email == 'rafaelleaobh@gmail.com' ||
+         request.auth.token.email == 'medleaobh@gmail.com');
     }
 
     // Regra para Cirurgias (Dados Clínicos Sensíveis - LGPD Art. 5º, II)

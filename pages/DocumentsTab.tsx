@@ -1,13 +1,16 @@
 import React, { useState, useEffect } from 'react';
-import { PasswordEntry, ReportTemplate, ElectrodeModel } from '../types';
+import { PasswordEntry, ReportTemplate, ElectrodeModel, User } from '../types';
 import {
     getPasswords, savePassword, deletePassword, subscribeToPasswords,
     getReportTemplates, saveReportTemplates, subscribeToReports,
     getElectrodeModels, saveElectrodeModels, subscribeToElectrodes
 } from '../services/storage';
+import { generateReportTemplateFromProcedure } from '../services/gemini';
+import { isAdminUser } from '../constants';
 
-export const DocumentsTab: React.FC<{ isDarkMode: boolean }> = ({ isDarkMode }) => {
-    const [activeSubTab, setActiveSubTab] = useState<'passwords' | 'reports' | 'electrodes'>('passwords');
+export const DocumentsTab: React.FC<{ isDarkMode: boolean; currentUser?: User | null }> = ({ isDarkMode, currentUser }) => {
+    const isCamarinhaMember = currentUser?.team_id === 'camarinha' || currentUser?.financial_config?.pricing_model === 'legacy_camarinha' || (currentUser?.email && isAdminUser(currentUser.email));
+    const [activeSubTab, setActiveSubTab] = useState<'passwords' | 'reports' | 'electrodes'>(isCamarinhaMember ? 'passwords' : 'reports');
 
     // Passwords
     const [passwords, setPasswords] = useState<PasswordEntry[]>([]);
@@ -18,6 +21,24 @@ export const DocumentsTab: React.FC<{ isDarkMode: boolean }> = ({ isDarkMode }) 
     const [reports, setReports] = useState<ReportTemplate[]>([]);
     const [repForm, setRepForm] = useState<Partial<ReportTemplate>>({});
     const [showRepForm, setShowRepForm] = useState(false);
+    const [isGeneratingAiReport, setIsGeneratingAiReport] = useState(false);
+
+    const handleGenerateAiReport = async () => {
+        if (!repForm.name || !repForm.name.trim()) {
+            alert('Por favor, informe primeiro o Nome da Cirurgia (ex: Artrodese Cervical) para a IA gerar a sugestão.');
+            return;
+        }
+        setIsGeneratingAiReport(true);
+        try {
+            const generated = await generateReportTemplateFromProcedure(repForm.name.trim());
+            setRepForm(prev => ({ ...prev, text: generated }));
+        } catch (err) {
+            console.error(err);
+            alert('Erro ao gerar modelo com IA.');
+        } finally {
+            setIsGeneratingAiReport(false);
+        }
+    };
 
     // Electrodes
     const [electrodes, setElectrodes] = useState<ElectrodeModel[]>([]);
@@ -100,12 +121,14 @@ export const DocumentsTab: React.FC<{ isDarkMode: boolean }> = ({ isDarkMode }) 
 
             {/* Sub Tabs */}
             <div className="flex bg-white dark:bg-slate-800 rounded-2xl shadow-sm border border-slate-200 dark:border-slate-700 p-1 w-full max-w-2xl mx-auto overflow-x-auto">
-                <button
-                    onClick={() => setActiveSubTab('passwords')}
-                    className={`flex-1 flex items-center justify-center gap-2 py-3 px-4 rounded-xl text-xs font-black uppercase tracking-widest transition-all whitespace-nowrap ${activeSubTab === 'passwords' ? 'bg-primary text-white shadow-md' : 'text-slate-500 hover:text-slate-700 dark:text-slate-400 dark:hover:text-slate-200'}`}
-                >
-                    <span className="material-icons text-sm sm:text-base">vpn_key</span> Senhas
-                </button>
+                {isCamarinhaMember && (
+                    <button
+                        onClick={() => setActiveSubTab('passwords')}
+                        className={`flex-1 flex items-center justify-center gap-2 py-3 px-4 rounded-xl text-xs font-black uppercase tracking-widest transition-all whitespace-nowrap ${activeSubTab === 'passwords' ? 'bg-primary text-white shadow-md' : 'text-slate-500 hover:text-slate-700 dark:text-slate-400 dark:hover:text-slate-200'}`}
+                    >
+                        <span className="material-icons text-sm sm:text-base">vpn_key</span> Senhas (Camarinha)
+                    </button>
+                )}
                 <button
                     onClick={() => setActiveSubTab('reports')}
                     className={`flex-1 flex items-center justify-center gap-2 py-3 px-4 rounded-xl text-xs font-black uppercase tracking-widest transition-all whitespace-nowrap ${activeSubTab === 'reports' ? 'bg-primary text-white shadow-md' : 'text-slate-500 hover:text-slate-700 dark:text-slate-400 dark:hover:text-slate-200'}`}
@@ -120,8 +143,8 @@ export const DocumentsTab: React.FC<{ isDarkMode: boolean }> = ({ isDarkMode }) 
                 </button>
             </div>
 
-            {/* Passwords Content */}
-            {activeSubTab === 'passwords' && (
+            {/* Passwords Content - Restrito a membros da Equipe Camarinha */}
+            {isCamarinhaMember && activeSubTab === 'passwords' && (
                 <div className="space-y-6 animate-in slide-in-from-bottom-4 duration-500">
                     <div className="bg-white dark:bg-slate-800 rounded-[2.5rem] shadow-sm border border-slate-200 dark:border-slate-700 p-6 sm:p-8">
                         <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-4 mb-8">
@@ -207,7 +230,24 @@ export const DocumentsTab: React.FC<{ isDarkMode: boolean }> = ({ isDarkMode }) 
 
                         {showRepForm && (
                             <div className="space-y-4 mb-10 p-6 bg-slate-50 dark:bg-slate-900/50 rounded-3xl border border-slate-100 dark:border-slate-700 animate-in slide-in-from-top-4 duration-300">
-                                <input type="text" placeholder="Nome da Cirurgia (ex: Artrodese Cervical)" value={repForm.name || ''} onChange={e => setRepForm({ ...repForm, name: e.target.value })} className="w-full bg-white dark:bg-slate-800 border border-slate-200 dark:border-slate-700 rounded-xl px-4 py-3 text-sm focus:ring-2 focus:ring-primary outline-none text-slate-900 dark:text-white font-bold" />
+                                <div className="flex flex-col sm:flex-row items-stretch sm:items-center gap-3">
+                                    <input 
+                                        type="text" 
+                                        placeholder="Nome da Cirurgia (ex: Artrodese Cervical)" 
+                                        value={repForm.name || ''} 
+                                        onChange={e => setRepForm({ ...repForm, name: e.target.value })} 
+                                        className="flex-1 bg-white dark:bg-slate-800 border border-slate-200 dark:border-slate-700 rounded-xl px-4 py-3 text-sm focus:ring-2 focus:ring-primary outline-none text-slate-900 dark:text-white font-bold" 
+                                    />
+                                    <button
+                                        type="button"
+                                        disabled={isGeneratingAiReport}
+                                        onClick={handleGenerateAiReport}
+                                        className="flex items-center justify-center gap-2 px-5 py-3 bg-amber-50 dark:bg-amber-900/30 text-amber-600 dark:text-amber-400 border border-amber-200 dark:border-amber-800/40 rounded-xl text-xs font-black uppercase tracking-wider hover:bg-amber-100 dark:hover:bg-amber-900/50 transition-all disabled:opacity-50 flex-shrink-0 cursor-pointer shadow-sm active:scale-95"
+                                    >
+                                        <span className="material-icons text-sm">{isGeneratingAiReport ? 'hourglass_top' : 'auto_awesome'}</span>
+                                        {isGeneratingAiReport ? 'Gerando com IA...' : 'Sugerir com IA'}
+                                    </button>
+                                </div>
                                 <textarea placeholder="Texto do Relatório Operatório..." value={repForm.text || ''} onChange={e => setRepForm({ ...repForm, text: e.target.value })} className="w-full bg-white dark:bg-slate-800 border border-slate-200 dark:border-slate-700 rounded-xl px-4 py-3 text-sm focus:ring-2 focus:ring-primary outline-none text-slate-900 dark:text-white min-h-[150px] resize-y" />
                                 <div className="flex justify-end">
                                     <button onClick={handleSaveReport} className="bg-primary text-white rounded-xl py-3 px-8 font-black uppercase text-xs tracking-widest hover:bg-primary/90 transition flex items-center gap-2">

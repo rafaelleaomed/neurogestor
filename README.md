@@ -59,12 +59,29 @@ Rather than treating Artificial Intelligence as an autonomous decision-maker, Ne
 ### Assistive Capabilities
 - **Technical Label OCR**: Optical character recognition on surgical implant boxes and monitoring sticker sheets;
 - **Unstructured Text Parsing**: Extracting operational metadata (anatomical levels, surgical approach) from raw operative summaries;
-- **Procedural Taxonomy Suggestions**: Suggesting canonical classifications (e.g., *Spine: Anterior Cervical Discectomy & Fusion (ACDF)* vs. *Lumbar TLIF*).
+- **Procedural Taxonomy Suggestions**: Suggesting canonical classifications (e.g., *Spine: Anterior Cervical Discectomy & Fusion (ACDF)* vs. *Lumbar TLIF*);
+- **AI-Assisted IONM Reporting**: Automated drafting of structured intraoperative monitoring reports and technical minutas tailored to specific neurosurgical or orthopedic procedures, with mandatory physician review and instant in-place editing;
+- **Multimodal Portfolio Synthesis**: Synthesizes clinical highlights, procedure timelines, and embeds intraoperative clinical photos, monitor screenshots, and implant labels into professional PDF dossiers and PowerPoint (PPTX) presentations.
 
 ### Clinical AI Principles
 - **No Autonomous Writes**: AI suggestions are staged in a transient validation state. A human physician must explicitly review and confirm any parsed parameter before it is committed to the medical record.
 - **Zero PII Exposure**: No patient demographic identifiers (names, IDs) are forwarded to external LLM endpoints during semantic classification.
 - **Deterministic Safeguards**: Heuristic rule engines take priority over generative outputs for anatomical level counting and critical metrics.
+
+---
+
+## 👥 Multi-User Onboarding & Flexible Compensation
+
+Neurogestor includes an adaptable financial configuration engine and tiered team management:
+- **Flexible Compensation Models**: Supports autonomous neurophysiologists and team members with customizable reimbursement workflows:
+  - *Fixed per-case fee* (valor fixo por cirurgia);
+  - *Custom health plan & private tier tables* (tabela personalizada por convênio/particular);
+  - *Case-by-case manual confirmation*;
+  - *Team revenue-sharing and commission rules*.
+- **Role-Based Governance & Teams**:
+  - **Master Admin (`medleaobh@gmail.com`)**: Global platform oversight, user approvals, role assignments, and enterprise financial analytics.
+  - **Team Administration**: Dynamic grouping (e.g., *Equipe Camarinha*) granting segregated access to sensitive clinical resources, such as institutional hospital credentials and remote server passwords.
+  - **Physician Personal View**: Individual clinicians maintain a dedicated personal workspace focused exclusively on their own cases, surgical volume, and personal revenue without cross-enterprise clutter.
 
 ---
 
@@ -77,9 +94,10 @@ To resolve the tension between daily clinical utility (where the physician must 
 - A single-click **Privacy Shield** toggle immediately de-identifies all onscreen patient names into standardized initials (e.g., `L. B. N. S. (Anonimizado)`) and masks financial data (`••••••`).
 - This allows secure clinical case presentations, academic reviews, and screenshares without exposing Patient Health Information (PHI).
 
-### 2. Regulatory Alignment
+### 2. Regulatory Alignment & User Support
 - **Art. 11, II, "a" (LGPD)**: Health data processing strictly governed under health protection and clinical care delivery.
 - **CFM Resolution nº 2.336/2023**: All portfolio case views are restricted to scientific, educational, and professional auditing purposes, strictly prohibiting commercial sensationalism or guarantees of clinical outcomes.
+- **Support & DPO Contact**: Direct transparency and privacy inquiry channel available to all users (`medleaobh@gmail.com`).
 - **Backend Least Privilege**: Replaced open database access with authenticated Role-Based Access Control (RBAC) and explicit security rules on Firestore and Storage.
 
 ---

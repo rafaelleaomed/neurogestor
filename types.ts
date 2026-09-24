@@ -47,6 +47,22 @@ export interface Surgery {
   houve_alarme?: boolean;
   condutas_alarme?: string[];
   clinical_images?: string[];
+  convenio?: string; // Convênio ou Particular (ex: 'Unimed', 'Bradesco', 'Particular')
+}
+
+export type PricingModelType = 'legacy_camarinha' | 'convenio' | 'fixed' | 'category';
+
+export interface UserFinancialConfig {
+  pricing_model: PricingModelType;
+  default_price?: number;
+  particular_price?: number;
+  convenios?: Record<string, number>; // Ex: { 'Unimed': 800, 'Bradesco': 1000 }
+  category_pricing?: {
+    [Category.COLUNA]?: number;
+    [Category.CRANIO]?: number;
+    [Category.NERVO_PERIFERICO]?: number;
+  };
+  confirm_per_surgery?: boolean; // Se true, destaca o valor para confirmação
 }
 
 export interface User {
@@ -57,6 +73,14 @@ export interface User {
   role?: 'user' | 'admin' | 'assistant' | 'owner';
   fcmToken?: string;
   rememberMe?: boolean;
+  // Perfil profissional e Onboarding
+  crm?: string; // Opcional (técnicos não possuem CRM)
+  uf?: string;
+  role_title?: string; // 'Neurofisiologista', 'Técnico de MNIO', 'Residente', etc.
+  onboarding_completed?: boolean;
+  financial_config?: UserFinancialConfig;
+  team_id?: string; // Ex: 'camarinha'
+  team_name?: string; // Ex: 'Equipe Camarinha'
 }
 
 export interface OCRResult {
@@ -65,6 +89,7 @@ export interface OCRResult {
   medico?: string;
   hospital?: string;
   data?: string;
+  convenio?: string;
 }
 
 export interface PasswordEntry {

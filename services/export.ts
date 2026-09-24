@@ -2,6 +2,8 @@ import { Surgery } from '../types';
 import jsPDF from 'jspdf';
 import pptxgen from 'pptxgenjs';
 import { generateCaseClinicalSummary } from './gemini';
+import { ref, getBlob } from 'firebase/storage';
+import { firebaseStorage } from './firebase';
 
 export type ExportProgressCallback = (current: number, total: number, message: string) => void;
 
@@ -21,8 +23,24 @@ async function loadImageAsBase64(url: string): Promise<LoadedImage | null> {
     let dataUrl = '';
     if (url.startsWith('data:image/')) {
       dataUrl = url;
-    } else {
-      // Tenta via fetch primeiro
+    } else if (url.includes('firebasestorage.googleapis.com') || url.includes('firebasestorage.app') || url.includes('storage.googleapis.com')) {
+      // 1. Prioriza download via SDK do Firebase Storage (imune a bloqueios de CORS no browser)
+      try {
+        const storageRef = ref(firebaseStorage, url);
+        const blob = await getBlob(storageRef);
+        dataUrl = await new Promise<string>((resolve, reject) => {
+          const reader = new FileReader();
+          reader.onloadend = () => resolve(reader.result as string);
+          reader.onerror = reject;
+          reader.readAsDataURL(blob);
+        });
+      } catch (fbErr) {
+        console.warn('[NeuroGestor Export] Falha no getBlob do Firebase, tentando fetch:', fbErr);
+      }
+    }
+
+    // 2. Se ainda não obteve o dataUrl, tenta via fetch com CORS
+    if (!dataUrl) {
       try {
         const resp = await fetch(url, { mode: 'cors' });
         const blob = await resp.blob();
@@ -497,8 +515,9 @@ export const generatePortfolioPPTX = async (
 
       if (loadedImages.length === 1) {
         const img = loadedImages[0];
+        const pptxData = img.data.startsWith('data:') ? img.data.replace(/^data:/, '') : img.data;
         slide.addImage({
-          data: img.data,
+          data: pptxData,
           x: imgX,
           y: 1.2,
           w: imgW,
@@ -509,9 +528,10 @@ export const generatePortfolioPPTX = async (
         // 2 imagens dispostas verticalmente
         for (let i = 0; i < Math.min(loadedImages.length, 2); i++) {
           const img = loadedImages[i];
+          const pptxData = img.data.startsWith('data:') ? img.data.replace(/^data:/, '') : img.data;
           const curY = 1.2 + i * 1.8;
           slide.addImage({
-            data: img.data,
+            data: pptxData,
             x: imgX,
             y: curY,
             w: imgW,

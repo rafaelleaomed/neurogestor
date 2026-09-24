@@ -4,10 +4,11 @@ import Login from './pages/Login';
 import Dashboard from './pages/Dashboard';
 import ProcedureForm from './pages/ProcedureForm';
 import AdminPanel from './pages/AdminPanel';
+import OnboardingModal from './components/OnboardingModal';
 import { getSession, setSession, getUsers, saveUser, initStorage, getSurgeries, updateSurgeriesBatch, updateUserFcmToken } from './services/storage';
 import { User } from './types';
 import { requestFirebaseNotificationPermission } from './services/notifications';
-import { ADMIN_EMAIL } from './constants';
+import { ADMIN_EMAIL, ADMIN_EMAILS, MASTER_ADMIN_EMAIL, isAdminUser, isMasterAdmin } from './constants';
 import { importData2025 } from './services/import2025';
 import { getCategoryFromText, classifySurgeryProcedure } from './utils';
 
@@ -26,29 +27,107 @@ const App: React.FC = () => {
     // Inicializa Firestore listeners e migra dados do localStorage
     initStorage();
 
-    // Initial setup if admin not exists
-    const users = getUsers();
-    const adminExists = users.some(u => u.email === ADMIN_EMAIL);
-    if (!adminExists) {
+    // Auto-migração retroativa de usuários existentes (mantém 100% de integridade com o modelo anterior)
+    const existingUsers = getUsers();
+    existingUsers.forEach(u => {
+      let changed = false;
+      if (u.onboarding_completed === undefined) {
+        u.onboarding_completed = true;
+        changed = true;
+      }
+      if (!u.financial_config) {
+        u.financial_config = { pricing_model: 'legacy_camarinha' };
+        changed = true;
+      }
+      // Coloca os usuários pré-existentes na Equipe Camarinha
+      if (!u.team_id) {
+        u.team_id = 'camarinha';
+        u.team_name = 'Equipe Camarinha';
+        changed = true;
+      }
+      if (changed) {
+        saveUser(u);
+      }
+    });
+
+    const activeSession = getSession();
+    if (activeSession) {
+      let sessionChanged = false;
+      if (activeSession.onboarding_completed === undefined) {
+        activeSession.onboarding_completed = true;
+        sessionChanged = true;
+      }
+      if (!activeSession.financial_config) {
+        activeSession.financial_config = { pricing_model: 'legacy_camarinha' };
+        sessionChanged = true;
+      }
+      if (!activeSession.team_id) {
+        activeSession.team_id = 'camarinha';
+        activeSession.team_name = 'Equipe Camarinha';
+        sessionChanged = true;
+      }
+      if (sessionChanged) {
+        setSession(activeSession);
+        setUser(activeSession);
+      }
+    }
+
+    // Configuração inicial dos administradores: medleaobh (Master) e rafaelleaobh (Pessoal/Admin)
+    const currentUsers = getUsers();
+    
+    // Master Admin medleaobh@gmail.com
+    const medleaoUser = currentUsers.find(u => u.email.toLowerCase() === MASTER_ADMIN_EMAIL.toLowerCase());
+    if (!medleaoUser) {
       saveUser({
-        email: ADMIN_EMAIL,
+        email: MASTER_ADMIN_EMAIL.toLowerCase(),
+        name: 'Administrador Master',
+        status: 'APPROVED',
+        role: 'owner',
+        onboarding_completed: true,
+        financial_config: { pricing_model: 'legacy_camarinha' },
+        team_id: 'camarinha',
+        team_name: 'Equipe Camarinha'
+      });
+    } else if (medleaoUser.status !== 'APPROVED' || medleaoUser.role !== 'owner' || medleaoUser.team_id !== 'camarinha') {
+      medleaoUser.status = 'APPROVED';
+      medleaoUser.role = 'owner';
+      medleaoUser.onboarding_completed = true;
+      medleaoUser.team_id = 'camarinha';
+      medleaoUser.team_name = 'Equipe Camarinha';
+      saveUser(medleaoUser);
+    }
+
+    // Admin rafaelleaobh@gmail.com
+    const rafaelUser = currentUsers.find(u => u.email.toLowerCase() === 'rafaelleaobh@gmail.com');
+    if (!rafaelUser) {
+      saveUser({
+        email: 'rafaelleaobh@gmail.com',
         name: 'Rafael Leão',
-        status: 'APPROVED'
+        status: 'APPROVED',
+        role: 'owner',
+        onboarding_completed: true,
+        financial_config: { pricing_model: 'legacy_camarinha' },
+        team_id: 'camarinha',
+        team_name: 'Equipe Camarinha'
       });
     } else {
-      // Forçar atualização do nome do admin se estiver com o nome antigo
-      const adminUser = users.find(u => u.email === ADMIN_EMAIL);
-      if (adminUser && (adminUser.name === 'Administrador Camarinha' || adminUser.role !== 'owner')) {
-        adminUser.name = 'Rafael Leão';
-        adminUser.role = 'owner';
-        saveUser(adminUser);
-
-        const session = getSession();
-        if (session && session.email === ADMIN_EMAIL) {
-          session.name = 'Rafael Leão';
-          setSession(session);
-          setUser(session);
-        }
+      let rafaelNeedsUpdate = false;
+      if (rafaelUser.name === 'Administrador Camarinha') {
+        rafaelUser.name = 'Rafael Leão';
+        rafaelNeedsUpdate = true;
+      }
+      if (rafaelUser.status !== 'APPROVED' || rafaelUser.role !== 'owner') {
+        rafaelUser.status = 'APPROVED';
+        rafaelUser.role = 'owner';
+        rafaelNeedsUpdate = true;
+      }
+      if (!rafaelUser.team_id) {
+        rafaelUser.team_id = 'camarinha';
+        rafaelUser.team_name = 'Equipe Camarinha';
+        rafaelNeedsUpdate = true;
+      }
+      if (rafaelNeedsUpdate) {
+        saveUser(rafaelUser);
       }
     }
 
@@ -108,13 +187,15 @@ const App: React.FC = () => {
         return;
       }
 
-      // Auto-aprova o admin e garante papel de owner
-      if (currentSession && currentSession.email.toLowerCase() === ADMIN_EMAIL.toLowerCase()) {
-        if (currentSession.status !== 'APPROVED' || currentSession.role !== 'owner') {
+      // Auto-aprova o admin master e garante papel de owner e equipe
+      if (currentSession && isAdminUser(currentSession.email)) {
+        if (currentSession.status !== 'APPROVED' || currentSession.role !== 'owner' || !currentSession.team_id) {
           const updated: User = {
             ...currentSession,
             status: 'APPROVED',
-            role: 'owner'
+            role: 'owner',
+            team_id: currentSession.team_id || 'camarinha',
+            team_name: currentSession.team_name || 'Equipe Camarinha'
           };
           saveUser(updated);
           setSession(updated);
@@ -150,21 +231,36 @@ const App: React.FC = () => {
       let foundUser = users.find(u => u.email.toLowerCase() === email.toLowerCase());
 
       if (!foundUser) {
-        const isOwnerAdmin = email.toLowerCase() === ADMIN_EMAIL.toLowerCase();
+        const isOwnerAdmin = isAdminUser(email);
         foundUser = {
           email: email.toLowerCase(),
           name: name || email.split('@')[0],
           status: isOwnerAdmin ? 'APPROVED' : 'PENDING',
-          role: 'user',
-          rememberMe: !!rememberMe
+          role: isOwnerAdmin ? 'owner' : 'user',
+          rememberMe: !!rememberMe,
+          onboarding_completed: isOwnerAdmin ? true : false,
+          financial_config: isOwnerAdmin ? { pricing_model: 'legacy_camarinha' } : undefined,
+          team_id: isOwnerAdmin ? 'camarinha' : undefined,
+          team_name: isOwnerAdmin ? 'Equipe Camarinha' : undefined
         };
         saveUser(foundUser);
       } else {
-        const isOwnerAdmin = email.toLowerCase() === ADMIN_EMAIL.toLowerCase();
+        const isOwnerAdmin = isAdminUser(email);
 
         let needsUpdate = false;
         if (isOwnerAdmin && foundUser.status !== 'APPROVED') {
           foundUser.status = 'APPROVED';
+          needsUpdate = true;
+        }
+
+        if (isOwnerAdmin && foundUser.role !== 'owner') {
+          foundUser.role = 'owner';
+          needsUpdate = true;
+        }
+
+        if (isOwnerAdmin && !foundUser.team_id) {
+          foundUser.team_id = 'camarinha';
+          foundUser.team_name = 'Equipe Camarinha';
           needsUpdate = true;
         }
 
@@ -193,13 +289,13 @@ const App: React.FC = () => {
     if (!user) return <Navigate to="/login" replace />;
 
     if (adminOnly) {
-      const isAuthorized = user.role === 'admin' || user.role === 'owner' || user.email === ADMIN_EMAIL;
+      const isAuthorized = user.role === 'admin' || user.role === 'owner' || isAdminUser(user.email);
       if (!isAuthorized) {
         return <Navigate to="/dashboard" replace />;
       }
     }
 
-    if (user.status === 'DENIED' && user.email !== ADMIN_EMAIL) {
+    if (user.status === 'DENIED' && !isAdminUser(user.email)) {
       return (
         <div className="flex flex-col items-center justify-center min-h-screen bg-slate-50 p-6 text-center">
           <div className="bg-white p-8 rounded-2xl shadow-xl max-w-md w-full border-t-4 border-red-500">
@@ -233,6 +329,16 @@ const App: React.FC = () => {
 
   return (
     <HashRouter>
+      {user && user.status === 'APPROVED' && !user.onboarding_completed && (
+        <OnboardingModal
+          user={user}
+          onSave={(updated) => {
+            saveUser(updated);
+            setSession(updated);
+            setUser(updated);
+          }}
+        />
+      )}
       <Routes>
         <Route path="/login" element={user ? <Navigate to="/dashboard" /> : <Login onLogin={handleLogin} isLoading={loading} />} />
         <Route path="/dashboard" element={<ProtectedRoute><Dashboard onLogout={handleLogout} /></ProtectedRoute>} />
