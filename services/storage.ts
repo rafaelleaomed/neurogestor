@@ -360,31 +360,60 @@ export const saveSurgery = async (surgery: Surgery) => {
   }
 };
 
-export const saveSurgeriesBatch = async (newSurgeries: Surgery[]) => {
+export const saveSurgeriesBatch = async (newSurgeries: Surgery[]): Promise<number> => {
+  if (!newSurgeries || newSurgeries.length === 0) return 0;
+
+  const user = getSession();
   const existing = getSurgeries();
   const toAdd: Surgery[] = [];
 
+  const normalize = (v: any) =>
+    typeof v === 'string'
+      ? v.normalize('NFD').replace(/[\u0300-\u036f]/g, '').toLowerCase().trim()
+      : '';
+
+  // Filtra cirurgias existentes pertencentes ao usuário logado para evitar falsos positivos com outras contas
+  const userExisting = user?.email
+    ? existing.filter(s => s.owner_email === user.email)
+    : existing;
+
   newSurgeries.forEach(newItem => {
-    const itemWithId = {
+    const itemWithId: Surgery = {
       ...newItem,
-      id: newItem.id || crypto.randomUUID()
+      id: newItem.id || crypto.randomUUID(),
+      owner_email: newItem.owner_email || user?.email || 'legacy'
     };
-    const isDuplicate = existing.some(old =>
-      old.paciente.trim().toLowerCase() === itemWithId.paciente.trim().toLowerCase() &&
-      old.data === itemWithId.data &&
-      old.procedimento.trim().toLowerCase() === itemWithId.procedimento.trim().toLowerCase()
-    );
+
+    const isDuplicate = userExisting.some(old => {
+      const oldPat = normalize(old.paciente);
+      const newPat = normalize(itemWithId.paciente);
+      const oldDate = (old.data || '').trim();
+      const newDate = (itemWithId.data || '').trim();
+      const oldProc = normalize(old.procedimento);
+      const newProc = normalize(itemWithId.procedimento);
+
+      // Não descarta se o nome for genérico ou vazio (o usuário pode estar importando para revisar)
+      if (!oldPat || !newPat || newPat === 'paciente nao identificado' || newPat === 'nao informado') {
+        return false;
+      }
+
+      // Duplicata idêntica: mesmo paciente, mesma data e mesmo procedimento
+      return oldPat === newPat && oldDate === newDate && oldProc === newProc;
+    });
+
     if (!isDuplicate) {
       toAdd.push(itemWithId);
     }
   });
 
-  if (toAdd.length === 0) return;
+  if (toAdd.length === 0) {
+    console.warn('[NeuroGestor] saveSurgeriesBatch: Todas as cirurgias do lote já existem para este usuário.');
+    return 0;
+  }
 
-  // Salva no Firestore em batches
+  // Salva no Firestore em lotes seguros
   try {
-    const user = getSession();
-    const batchSize = 450;
+    const batchSize = 400;
     for (let i = 0; i < toAdd.length; i += batchSize) {
       const batch = writeBatch(db);
       const chunk = toAdd.slice(i, i + batchSize);
@@ -398,10 +427,10 @@ export const saveSurgeriesBatch = async (newSurgeries: Surgery[]) => {
       await batch.commit();
     }
   } catch (error) {
-    console.error('[NeuroGestor] Erro ao salvar batch no Firestore:', error);
+    console.error('[NeuroGestor] Erro ao salvar batch no Firestore (salvando localmente como fallback):', error);
   }
 
-  // Atualiza cache em memória e localStorage
+  // Atualiza cache em memória e localStorage sempre
   const combined = [...existing, ...toAdd];
   if (surgeriesCache !== null) {
     surgeriesCache = combined;
@@ -411,6 +440,8 @@ export const saveSurgeriesBatch = async (newSurgeries: Surgery[]) => {
   } catch (e) {
     console.warn('[NeuroGestor] LocalStorage cheio ao salvar batch.');
   }
+
+  return toAdd.length;
 };
 
 export const updateSurgeriesBatch = async (updatedSurgeries: Surgery[]) => {

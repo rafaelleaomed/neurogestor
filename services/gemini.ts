@@ -77,6 +77,8 @@ async function callGeminiWithFallback(ai: GoogleGenAI, requestPayload: any): Pro
     const isModelIssue =
       errStr.includes("404") ||
       errStr.includes("503") ||
+      errStr.includes("429") ||
+      errStr.includes("RESOURCE_EXHAUSTED") ||
       errStr.includes("NOT_FOUND") ||
       errStr.includes("UNAVAILABLE");
 
@@ -347,98 +349,73 @@ export const performBatchLabelsOCR = async (
   base64Images: string[],
   onProgress?: (processed: number, total: number) => void
 ): Promise<Surgery[]> => {
-  const BATCH_SIZE = 3; // Lote reduzido para estabilidade de memória e máxima precisão
+  if (base64Images.length === 0) return [];
+
   const allResults: Surgery[] = [];
-  let processed = 0;
-  const context = buildOCRContext();
+  const total = base64Images.length;
+  let processedCount = 0;
 
-  for (let i = 0; i < base64Images.length; i += BATCH_SIZE) {
-    const batch = base64Images.slice(i, i + BATCH_SIZE);
+  // Processa as imagens com concorrência controlada de 2 em 2
+  // Isso previne estouro de taxa da API (RPM) ao mesmo tempo que mantém altíssima velocidade
+  const CONCURRENCY = 2;
+  const queue = [...base64Images.map((img, index) => ({ img, index }))];
 
-    const batchResults = await aiQueue.add(async () => {
-      const ai = new GoogleGenAI({ apiKey: process.env.API_KEY });
+  const processImageWorker = async () => {
+    while (queue.length > 0) {
+      const item = queue.shift();
+      if (!item) break;
 
-      // Montar parts com todas as imagens do lote
-      const parts: any[] = [];
-      batch.forEach((base64, idx) => {
-        parts.push({
-          inlineData: {
-            mimeType: "image/jpeg",
-            data: base64.split(',')[1] || base64,
-          },
-        });
-        parts.push({ text: `[Etiqueta ${idx + 1} de ${batch.length}]` });
-      });
+      const { img, index } = item;
+      try {
+        // Usa performOCR individual que possui esquema JSON rígido e extrai convênio
+        const ocrData = await performOCR(img);
+        const proc = ocrData.procedimento || "Procedimento a identificar";
 
-      parts.push({
-        text: `Você recebeu ${batch.length} imagem(ns) de etiquetas cirúrgicas de um serviço de neurocirurgia.
-Para CADA etiqueta, extraia com MÁXIMA PRECISÃO:
-1. Nome COMPLETO do Paciente
-2. Procedimento cirúrgico realizado (incluindo níveis vertebrais se houver, ex: ARTRODESE C5-C6)
-3. Nome COMPLETO do Cirurgião/Médico (priorize cirurgião responsável)
-4. Nome COMPLETO do Hospital
-5. Data da cirurgia no formato YYYY-MM-DD
-
-${context}
-
-REGRAS:
-- Retorne um ARRAY JSON com EXATAMENTE ${batch.length} objeto(s).
-- Se não conseguir identificar um campo, retorne string vazia "".
-- Se duas etiquetas forem semelhantes, extraia os dados de cada uma separadamente.`,
-      });
-
-      const response = await callGeminiWithFallback(ai, {
-        contents: { parts },
-        config: {
-          responseMimeType: "application/json",
-          responseSchema: {
-            type: Type.ARRAY,
-            items: {
-              type: Type.OBJECT,
-              properties: {
-                paciente: { type: Type.STRING },
-                procedimento: { type: Type.STRING },
-                medico: { type: Type.STRING },
-                hospital: { type: Type.STRING },
-                data: { type: Type.STRING },
-              },
-            },
-          },
-        },
-      });
-
-      return JSON.parse(response.text || "[]") as OCRResult[];
-    }).catch((err) => {
-      console.error(`[NeuroGestor] Erro no batch OCR (imagens ${i + 1}-${i + batch.length}):`, err);
-      return [] as OCRResult[];
-    });
-
-    // Converter resultados OCR em Surgery + pós-processamento inteligente
-    batchResults.forEach((data: OCRResult, idx: number) => {
-      const processed_data = postProcessOCRResult(data);
-      if (processed_data.paciente && processed_data.paciente.trim() !== '') {
-        const proc = processed_data.procedimento || "Não especificado";
         allResults.push({
           id: crypto.randomUUID(),
-          paciente: processed_data.paciente,
+          paciente: ocrData.paciente || "Paciente a identificar (Revisar)",
           procedimento: proc,
-          medico: processed_data.medico || "Médico não informado",
-          hospital: processed_data.hospital || "Hospital não informado",
-          data: processed_data.data || new Date().toISOString().split('T')[0],
+          medico: ocrData.medico || "Médico não informado",
+          hospital: ocrData.hospital || "Hospital não informado",
+          data: ocrData.data || new Date().toISOString().split('T')[0],
+          convenio: ocrData.convenio || undefined,
           categoria: getCategoryFromText(proc),
-          valor_estimado: calculatePrice(proc),
+          valor_estimado: calculatePrice(proc, undefined, undefined, ocrData.convenio),
           status: Status.REALIZADO,
-          created_at: Date.now(),
-          label_images: [batch[idx] || '']
+          created_at: Date.now() + index,
+          label_images: [img]
         });
+      } catch (err) {
+        console.warn(`[NeuroGestor] Erro na leitura da etiqueta ${index + 1}:`, err);
+        // Mesmo em caso de falha pontual da IA, NUNCA descarta a imagem enviada pelo médico!
+        // Cria um card com os dados provisórios para preenchimento manual na tela de revisão
+        allResults.push({
+          id: crypto.randomUUID(),
+          paciente: "Paciente a identificar (Revisar)",
+          procedimento: "Procedimento a identificar",
+          medico: "Não informado",
+          hospital: "Não informado",
+          data: new Date().toISOString().split('T')[0],
+          categoria: Category.COLUNA,
+          valor_estimado: 0,
+          status: Status.REALIZADO,
+          created_at: Date.now() + index,
+          label_images: [img]
+        });
+      } finally {
+        processedCount++;
+        onProgress?.(processedCount, total);
+        // Pequena pausa para estabilidade do rate limit
+        await new Promise(r => setTimeout(r, 150));
       }
-    });
+    }
+  };
 
-    processed += batch.length;
-    onProgress?.(Math.min(processed, base64Images.length), base64Images.length);
-  }
+  const workers = Array.from({ length: Math.min(CONCURRENCY, base64Images.length) }, () => processImageWorker());
+  await Promise.all(workers);
 
-  return allResults;
+  // Ordena os resultados para manter a mesma ordem de upload original
+  return allResults.sort((a, b) => (a.created_at || 0) - (b.created_at || 0));
 };
 
 // ============================================================

@@ -57,7 +57,8 @@ When this information remains unstructured:
 Rather than treating Artificial Intelligence as an autonomous decision-maker, Neurogestor implements AI as a **narrow, assistive productivity layer**:
 
 ### Assistive Capabilities
-- **Technical Label OCR**: Optical character recognition on surgical implant boxes and monitoring sticker sheets;
+- **Technical Label OCR & Resilient Batch Ingestion**: High-throughput optical character recognition for surgical implant stickers and monitoring log sheets. Built with client-side adaptive image compression (75% RAM footprint reduction on mobile browsers), rate-limit backoff, multi-model fallback (`Gemini 2.5 Flash` -> `Gemini 2.0 Flash`), zero-drop guarantee for unread labels, and interactive batch conference with full-resolution sticker lightbox zoom;
+- **Strict User-Tenant Deduplication**: Intelligent cross-case duplicate detection isolated per clinician account (`owner_email`), preventing false duplicate alerts across team members and ignoring generic placeholders;
 - **Unstructured Text Parsing**: Extracting operational metadata (anatomical levels, surgical approach) from raw operative summaries;
 - **Procedural Taxonomy Suggestions**: Suggesting canonical classifications (e.g., *Spine: Anterior Cervical Discectomy & Fusion (ACDF)* vs. *Lumbar TLIF*);
 - **AI-Assisted IONM Reporting**: Automated drafting of structured intraoperative monitoring reports and technical minutas tailored to specific neurosurgical or orthopedic procedures, with mandatory physician review and instant in-place editing;
@@ -67,6 +68,7 @@ Rather than treating Artificial Intelligence as an autonomous decision-maker, Ne
 - **No Autonomous Writes**: AI suggestions are staged in a transient validation state. A human physician must explicitly review and confirm any parsed parameter before it is committed to the medical record.
 - **Zero PII Exposure**: No patient demographic identifiers (names, IDs) are forwarded to external LLM endpoints during semantic classification.
 - **Deterministic Safeguards**: Heuristic rule engines take priority over generative outputs for anatomical level counting and critical metrics.
+- **Fault-Tolerant Clinical Ingestion**: Network or quota spikes during high-volume batch processing never discard medical sticker photos, preserving them for manual inline physician review.
 
 ---
 

@@ -92,6 +92,7 @@ const Dashboard: React.FC<{ onLogout: () => void }> = ({ onLogout }) => {
   const [selectedSurgery, setSelectedSurgery] = useState<Surgery | null>(null);
   const [isSettingsOpen, setIsSettingsOpen] = useState(false);
   const [batchReviewData, setBatchReviewData] = useState<Surgery[] | null>(null);
+  const [previewImage, setPreviewImage] = useState<string | null>(null);
 
   const [selectedIds, setSelectedIds] = useState<Set<string>>(new Set());
 
@@ -143,29 +144,70 @@ const Dashboard: React.FC<{ onLogout: () => void }> = ({ onLogout }) => {
   };
 
   /**
-   * Verifica duplicatas: mesmo paciente no mesmo mês (YYYY-MM).
-   * Compara contra cirurgias que já existem no banco.
+   * Verifica duplicatas com isolamento estrito por usuário:
+   * Compara apenas contra cirurgias do próprio usuário logado.
+   * Não dispara falso-positivo para nomes genéricos ou procedimentos diferentes.
    */
   const checkDuplicates = (newSurgeries: Surgery[]): Surgery[] => {
     const existingSurgeries = getSurgeries();
-    return newSurgeries.map(ns => {
-      const nsMonth = ns.data?.slice(0, 7); // 'YYYY-MM'
-      const nsName = ns.paciente?.toUpperCase().trim();
-      if (!nsMonth || !nsName) return ns;
+    // Filtra exclusivamente cirurgias pertencentes ao usuário logado
+    const userSurgeries = currentUser?.email
+      ? existingSurgeries.filter(s => s.owner_email === currentUser.email)
+      : existingSurgeries;
 
-      // Verifica contra cirurgias existentes
-      const existingMatch = existingSurgeries.find(es => {
-        const esMonth = es.data?.slice(0, 7);
-        const esName = es.paciente?.toUpperCase().trim();
-        return esMonth === nsMonth && esName === nsName;
+    const normalize = (v?: string) =>
+      (v || '')
+        .normalize('NFD')
+        .replace(/[\u0300-\u036f]/g, '')
+        .toUpperCase()
+        .trim();
+
+    return newSurgeries.map((ns, idx) => {
+      const nsName = normalize(ns.paciente);
+      const nsDate = (ns.data || '').trim();
+      const nsProc = normalize(ns.procedimento);
+
+      // Não marca duplicata para nomes genéricos ou a identificar
+      if (
+        !nsName ||
+        nsName.includes('PACIENTE A IDENTIFICAR') ||
+        nsName.includes('NAO IDENTIFICADO') ||
+        nsName === 'NAO INFORMADO'
+      ) {
+        return ns;
+      }
+
+      // 1. Verifica contra cirurgias existentes do próprio usuário
+      const existingMatch = userSurgeries.find(es => {
+        const esName = normalize(es.paciente);
+        const esDate = (es.data || '').trim();
+        const esProc = normalize(es.procedimento);
+        if (!esName || esName !== nsName) return false;
+
+        // Se a data exata coincidir
+        if (esDate && nsDate && esDate === nsDate) return true;
+
+        // Se for no mesmo mês e tiver o mesmo procedimento
+        const esMonth = esDate.slice(0, 7);
+        const nsMonth = nsDate.slice(0, 7);
+        if (esMonth && nsMonth && esMonth === nsMonth && esProc && nsProc && esProc === nsProc) {
+          return true;
+        }
+
+        return false;
       });
 
-      // Verifica contra outros itens do mesmo lote
-      const batchMatch = newSurgeries.find(other => {
-        if (other.id === ns.id) return false;
-        const otherMonth = other.data?.slice(0, 7);
-        const otherName = other.paciente?.toUpperCase().trim();
-        return otherMonth === nsMonth && otherName === nsName;
+      // 2. Verifica contra outros itens do mesmo lote
+      const batchMatch = newSurgeries.find((other, otherIdx) => {
+        if (otherIdx === idx) return false;
+        const otherName = normalize(other.paciente);
+        const otherDate = (other.data || '').trim();
+        const otherProc = normalize(other.procedimento);
+        if (!otherName || otherName !== nsName) return false;
+
+        if (otherDate && nsDate && otherDate === nsDate) return true;
+        if (otherProc && nsProc && otherProc === nsProc) return true;
+        return false;
       });
 
       if (existingMatch || batchMatch) {
@@ -603,65 +645,133 @@ const Dashboard: React.FC<{ onLogout: () => void }> = ({ onLogout }) => {
     const files = Array.from(e.target.files || []) as File[];
     if (files.length === 0) return;
     setIsProcessing(true);
-    setProcessingMsg(`IA Analisando ${files.length} etiquetas...`);
+    setProcessProgress(0);
+    setProcessingMsg(`Preparando e otimizando ${files.length} imagens...`);
 
     const base64Images: string[] = [];
-    for (const file of files) {
+    for (let i = 0; i < files.length; i++) {
+      const file = files[i];
       try {
-        const b64 = await compressImage(file, 1600, 0.85);
+        setProcessingMsg(`Otimizando foto ${i + 1} de ${files.length}...`);
+        setProcessProgress(Math.round(((i + 1) / files.length) * 25));
+        // Otimização: 1280px e 0.75 economizam até 75% da RAM em celulares sem perder legibilidade no OCR
+        const b64 = await compressImage(file, 1280, 0.75);
         base64Images.push(b64);
       } catch (err) {
         console.error("Erro ao comprimir imagem em lote:", err);
       }
     }
 
+    if (base64Images.length === 0) {
+      setIsProcessing(false);
+      alert("Não foi possível processar as imagens selecionadas. Tente novamente.");
+      return;
+    }
+
     try {
-      setProcessProgress(0);
+      setProcessingMsg(`IA analisando etiquetas... 0/${base64Images.length}`);
       const results = await performBatchLabelsOCR(base64Images, (processed, total) => {
-        setProcessingMsg(`IA processando... ${processed}/${total} etiquetas`);
-        setProcessProgress((processed / total) * 100);
+        setProcessingMsg(`IA lendo etiquetas... ${processed}/${total}`);
+        setProcessProgress(25 + Math.round((processed / total) * 75));
       });
+
       if (results.length === 0) {
-        alert(`Nenhuma cirurgia identificada nas ${files.length} etiquetas. Tente novamente com imagens mais nítidas.`);
+        alert(`Nenhuma etiqueta pôde ser lida nas ${files.length} imagens. Tente novamente com fotos mais nítidas.`);
       } else {
-        // Verifica duplicatas antes de mostrar review
-        const checked = checkDuplicates(results);
+        // Vincula owner_email do usuário logado desde o início
+        const mappedResults: Surgery[] = results.map(s => ({
+          ...s,
+          owner_email: currentUser?.email || 'legacy'
+        }));
+
+        const checked = checkDuplicates(mappedResults);
         const dupeCount = checked.filter(s => s.possivel_duplicata).length;
         if (dupeCount > 0) {
-          alert(`⚠️ ${dupeCount} possível(is) duplicata(s) detectada(s)! Revise os itens destacados em amarelo antes de confirmar.`);
+          showToast(`⚠️ ${dupeCount} possível(is) duplicata(s) detectada(s). Revise os itens destacados em amarelo.`, 'error');
         }
         setBatchReviewData(checked);
       }
     } catch (err) {
-      alert("Cota da IA atingida. Tente novamente em alguns segundos.");
+      console.error("Erro no processamento OCR:", err);
+      alert("Houve uma instabilidade temporária na comunicação com a IA. Tente novamente em alguns segundos.");
     } finally {
       setIsProcessing(false);
+      setProcessProgress(0);
       if (batchLabelInputRef.current) batchLabelInputRef.current.value = '';
     }
   };
 
-  const saveReviewedBatch = () => {
-    if (!batchReviewData) return;
+  const saveReviewedBatch = async () => {
+    if (!batchReviewData || batchReviewData.length === 0) return;
 
-    // Validação de campos essenciais
-    const invalidItems = batchReviewData.filter(item => !item.paciente || !item.procedimento || !item.data);
-    if (invalidItems.length > 0) {
-      alert("Existem itens com campos obrigatórios vazios (Paciente, Procedimento ou Data). Por favor, preencha todos antes de salvar.");
-      return;
+    // Checa se há campos pendentes
+    const incompleteItems = batchReviewData.filter(
+      item => !item.paciente || item.paciente.toLowerCase().includes('a identificar') || !item.procedimento || !item.data
+    );
+
+    if (incompleteItems.length > 0) {
+      const confirmIncomplete = confirm(
+        `Existem ${incompleteItems.length} etiqueta(s) com informações pendentes.\n\nDeseja salvar mesmo assim com dados provisórios para complementar na tabela depois?`
+      );
+      if (!confirmIncomplete) return;
     }
 
     const dupeCount = batchReviewData.filter(s => s.possivel_duplicata).length;
     if (dupeCount > 0) {
-      const confirmed = confirm(`⚠️ Existem ${dupeCount} possível(is) duplicata(s).\n\nDeseja salvar mesmo assim? Elas ficarão marcadas na tabela de cirurgias para revisão posterior.`);
+      const confirmed = confirm(
+        `⚠️ Existem ${dupeCount} cirurgia(s) apontada(s) como possível duplicata.\n\nDeseja confirmar o registro mesmo assim?`
+      );
       if (!confirmed) return;
     }
 
-    saveSurgeriesBatch(batchReviewData);
-    refreshData();
-    setBatchReviewData(null);
-    setProcessProgress(0);
-    setActiveTab('surgeries');
-    alert(`${batchReviewData.length} registros salvos com sucesso na tabela.`);
+    setIsProcessing(true);
+    setProcessingMsg(`Gravando ${batchReviewData.length} cirurgias no sistema...`);
+
+    try {
+      // Higieniza e garante o owner_email correto em cada registro
+      const sanitizedBatch: Surgery[] = batchReviewData.map(item => {
+        const proc = item.procedimento?.trim() || 'Procedimento a Definir';
+        return {
+          ...item,
+          id: item.id || crypto.randomUUID(),
+          owner_email: currentUser?.email || item.owner_email || 'legacy',
+          paciente: item.paciente?.trim() || 'Paciente Não Identificado',
+          procedimento: proc,
+          categoria: item.categoria || getCategoryFromText(proc),
+          medico: item.medico?.trim() || 'Não informado',
+          hospital: item.hospital?.trim() || 'Não informado',
+          data: item.data?.trim() || new Date().toISOString().split('T')[0],
+          convenio: item.convenio || undefined,
+          valor_estimado: typeof item.valor_estimado === 'number' && item.valor_estimado > 0
+            ? item.valor_estimado
+            : calculatePrice(proc, item.categoria, currentUser, item.convenio),
+          status: item.status || Status.REALIZADO,
+          created_at: item.created_at || Date.now()
+        };
+      });
+
+      const savedCount = await saveSurgeriesBatch(sanitizedBatch);
+
+      // Auto-ajusta os filtros de data para o mês do lote importado para exibir imediatamente na tabela
+      if (sanitizedBatch.length > 0 && sanitizedBatch[0].data) {
+        const parts = sanitizedBatch[0].data.split('-');
+        if (parts.length === 3) {
+          setFilterYearSurgeries(parts[0]);
+          setFilterMonthSurgeries(parts[1]);
+        }
+      }
+
+      refreshData();
+      setBatchReviewData(null);
+      setActiveTab('surgeries');
+      showToast(`${savedCount} cirurgias registradas com sucesso!`, 'success');
+    } catch (err) {
+      console.error('Erro ao salvar lote de cirurgias:', err);
+      alert('Ocorreu um erro ao salvar o lote. Tente novamente.');
+    } finally {
+      setIsProcessing(false);
+      setProcessProgress(0);
+    }
   };
 
   const removeReviewItem = (index: number) => {
@@ -683,6 +793,10 @@ const Dashboard: React.FC<{ onLogout: () => void }> = ({ onLogout }) => {
     (newData[index] as any)[field] = value;
     if (field === 'procedimento') {
       newData[index].categoria = getCategoryFromText(value);
+      newData[index].valor_estimado = calculatePrice(value, newData[index].categoria, currentUser, newData[index].convenio);
+    }
+    if (field === 'convenio') {
+      newData[index].valor_estimado = calculatePrice(newData[index].procedimento, newData[index].categoria, currentUser, value);
     }
     setBatchReviewData(newData);
   };
@@ -762,47 +876,184 @@ const Dashboard: React.FC<{ onLogout: () => void }> = ({ onLogout }) => {
                 </button>
               </div>
               <div className="flex-1 overflow-y-auto p-4 sm:p-8 space-y-4">
-                {batchReviewData.map((item, idx) => (
-                  <div key={idx} className={`p-4 sm:p-5 rounded-2xl sm:rounded-3xl grid grid-cols-1 md:grid-cols-4 gap-3 sm:gap-4 items-end border transition-colors relative ${item.possivel_duplicata ? 'bg-amber-50 dark:bg-amber-900/20 border-amber-300 dark:border-amber-700 ring-2 ring-amber-200' : 'bg-slate-50 dark:bg-slate-800/40 border-slate-100 dark:border-slate-800 hover:border-primary/30'}`}>
-                    {/* Badge de duplicata */}
-                    {item.possivel_duplicata && (
-                      <div className="absolute -top-3 left-4 sm:left-6 flex items-center gap-2">
-                        <span className="bg-amber-500 text-white text-[9px] font-black uppercase tracking-widest px-3 py-1 rounded-full shadow-lg flex items-center gap-1">
-                          <span className="material-icons text-xs">warning</span> POSSÍVEL DUPLICATA
-                        </span>
-                        <button onClick={() => dismissDuplicate(idx)} className="bg-white text-amber-600 text-[9px] font-black uppercase tracking-widest px-2 py-1 rounded-full shadow-sm hover:bg-amber-50 transition-colors" title="Marcar como NÃO duplicata">
-                          Não é duplicata
-                        </button>
+                {batchReviewData.map((item, idx) => {
+                  const hasLabelImg = item.label_images && item.label_images.length > 0 && item.label_images[0];
+                  const isIncomplete = !item.paciente || item.paciente.toLowerCase().includes('a identificar') || !item.procedimento || !item.data;
+
+                  return (
+                    <div
+                      key={idx}
+                      className={`p-4 sm:p-5 rounded-2xl sm:rounded-3xl border transition-colors relative flex flex-col md:flex-row gap-4 items-start md:items-center ${
+                        item.possivel_duplicata
+                          ? 'bg-amber-50 dark:bg-amber-900/20 border-amber-300 dark:border-amber-700 ring-2 ring-amber-200'
+                          : isIncomplete
+                          ? 'bg-orange-50/50 dark:bg-orange-950/20 border-orange-200 dark:border-orange-800'
+                          : 'bg-slate-50 dark:bg-slate-800/40 border-slate-100 dark:border-slate-800 hover:border-primary/30'
+                      }`}
+                    >
+                      {/* Badge de duplicata */}
+                      {item.possivel_duplicata && (
+                        <div className="absolute -top-3 left-4 sm:left-6 flex items-center gap-2 z-10">
+                          <span className="bg-amber-500 text-white text-[9px] font-black uppercase tracking-widest px-3 py-1 rounded-full shadow-lg flex items-center gap-1">
+                            <span className="material-icons text-xs">warning</span> POSSÍVEL DUPLICATA
+                          </span>
+                          <button
+                            onClick={() => dismissDuplicate(idx)}
+                            className="bg-white text-amber-600 text-[9px] font-black uppercase tracking-widest px-2 py-1 rounded-full shadow-sm hover:bg-amber-50 transition-colors"
+                            title="Marcar como NÃO duplicata"
+                          >
+                            Não é duplicata
+                          </button>
+                        </div>
+                      )}
+
+                      {/* Miniatura da etiqueta original com zoom */}
+                      {hasLabelImg && (
+                        <div className="flex-shrink-0 flex flex-col items-center gap-1 self-center md:self-auto">
+                          <div
+                            onClick={() => setPreviewImage(item.label_images![0])}
+                            className="relative w-16 h-16 sm:w-20 sm:h-20 rounded-2xl overflow-hidden border-2 border-slate-200 dark:border-slate-700 shadow-sm cursor-pointer group bg-slate-200 dark:bg-slate-800 flex-shrink-0"
+                            title="Clique para ampliar a foto da etiqueta"
+                          >
+                            <img
+                              src={item.label_images![0]}
+                              alt="Etiqueta"
+                              className="w-full h-full object-cover group-hover:scale-110 transition-transform duration-300"
+                            />
+                            <div className="absolute inset-0 bg-black/40 opacity-0 group-hover:opacity-100 flex items-center justify-center transition-opacity">
+                              <span className="material-icons text-white text-base">zoom_in</span>
+                            </div>
+                          </div>
+                          <span className="text-[8px] sm:text-[9px] font-black text-slate-400 uppercase tracking-widest">Ver foto</span>
+                        </div>
+                      )}
+
+                      {/* Inputs de edição inline */}
+                      <div className="flex-1 grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-5 gap-3 items-end w-full">
+                        <div className="space-y-1">
+                          <label className="text-[10px] font-black text-slate-400 uppercase tracking-widest ml-1">
+                            Paciente {isIncomplete && !item.paciente && <span className="text-red-500">*</span>}
+                          </label>
+                          <input
+                            type="text"
+                            value={item.paciente}
+                            placeholder="Nome do paciente"
+                            onChange={e => updateReviewItem(idx, 'paciente', e.target.value)}
+                            className={`w-full border-none rounded-xl p-3 text-sm font-bold shadow-sm focus:ring-2 ring-primary/20 text-slate-900 dark:text-white ${
+                              item.possivel_duplicata
+                                ? 'bg-amber-100 dark:bg-amber-900/30'
+                                : isIncomplete && (!item.paciente || item.paciente.includes('a identificar'))
+                                ? 'bg-orange-100/80 dark:bg-orange-900/30 ring-1 ring-orange-300'
+                                : 'bg-white dark:bg-slate-900'
+                            }`}
+                          />
+                        </div>
+
+                        <div className="space-y-1">
+                          <label className="text-[10px] font-black text-slate-400 uppercase tracking-widest ml-1">
+                            Procedimento
+                          </label>
+                          <input
+                            type="text"
+                            value={item.procedimento}
+                            placeholder="Procedimento realizado"
+                            onChange={e => updateReviewItem(idx, 'procedimento', e.target.value)}
+                            className={`w-full border-none rounded-xl p-3 text-sm font-bold shadow-sm focus:ring-2 ring-primary/20 text-slate-900 dark:text-white ${
+                              item.possivel_duplicata ? 'bg-amber-100 dark:bg-amber-900/30' : 'bg-white dark:bg-slate-900'
+                            }`}
+                          />
+                        </div>
+
+                        <div className="space-y-1">
+                          <label className="text-[10px] font-black text-slate-400 uppercase tracking-widest ml-1">
+                            Data
+                          </label>
+                          <input
+                            type="date"
+                            value={item.data}
+                            onChange={e => updateReviewItem(idx, 'data', e.target.value)}
+                            className={`w-full border-none rounded-xl p-3 text-sm font-bold shadow-sm focus:ring-2 ring-primary/20 text-slate-900 dark:text-white ${
+                              item.possivel_duplicata ? 'bg-amber-100 dark:bg-amber-900/30' : 'bg-white dark:bg-slate-900'
+                            }`}
+                          />
+                        </div>
+
+                        <div className="space-y-1">
+                          <label className="text-[10px] font-black text-slate-400 uppercase tracking-widest ml-1">
+                            Hospital
+                          </label>
+                          <input
+                            type="text"
+                            value={item.hospital}
+                            placeholder="Hospital"
+                            onChange={e => updateReviewItem(idx, 'hospital', e.target.value)}
+                            className={`w-full border-none rounded-xl p-3 text-sm font-bold shadow-sm focus:ring-2 ring-primary/20 text-slate-900 dark:text-white ${
+                              item.possivel_duplicata ? 'bg-amber-100 dark:bg-amber-900/30' : 'bg-white dark:bg-slate-900'
+                            }`}
+                          />
+                        </div>
+
+                        <div className="flex items-end gap-2">
+                          <div className="space-y-1 flex-1">
+                            <label className="text-[10px] font-black text-slate-400 uppercase tracking-widest ml-1">
+                              Convênio
+                            </label>
+                            <input
+                              type="text"
+                              value={item.convenio || ''}
+                              placeholder="Convênio / Plano"
+                              onChange={e => updateReviewItem(idx, 'convenio', e.target.value)}
+                              className={`w-full border-none rounded-xl p-3 text-sm font-bold shadow-sm focus:ring-2 ring-primary/20 text-slate-900 dark:text-white ${
+                                item.possivel_duplicata ? 'bg-amber-100 dark:bg-amber-900/30' : 'bg-white dark:bg-slate-900'
+                              }`}
+                            />
+                          </div>
+
+                          <button
+                            onClick={() => removeReviewItem(idx)}
+                            className="p-3 text-slate-300 hover:text-red-500 hover:bg-red-50 dark:hover:bg-red-950/20 rounded-xl transition-all"
+                            title="Remover cirurgia deste lote"
+                          >
+                            <span className="material-icons text-xl">delete</span>
+                          </button>
+                        </div>
                       </div>
-                    )}
-                    <div className="space-y-1">
-                      <label className="text-[10px] font-black text-slate-400 uppercase tracking-widest ml-1">Paciente</label>
-                      <input type="text" value={item.paciente} onChange={e => updateReviewItem(idx, 'paciente', e.target.value)} className={`w-full border-none rounded-xl p-3 text-sm font-bold shadow-sm focus:ring-2 ring-primary/20 text-slate-900 dark:text-white ${item.possivel_duplicata ? 'bg-amber-100 dark:bg-amber-900/30' : 'bg-white dark:bg-slate-900'}`} />
                     </div>
-                    <div className="space-y-1">
-                      <label className="text-[10px] font-black text-slate-400 uppercase tracking-widest ml-1">Procedimento</label>
-                      <input type="text" value={item.procedimento} onChange={e => updateReviewItem(idx, 'procedimento', e.target.value)} className={`w-full border-none rounded-xl p-3 text-sm font-bold shadow-sm focus:ring-2 ring-primary/20 text-slate-900 dark:text-white ${item.possivel_duplicata ? 'bg-amber-100 dark:bg-amber-900/30' : 'bg-white dark:bg-slate-900'}`} />
-                    </div>
-                    <div className="space-y-1">
-                      <label className="text-[10px] font-black text-slate-400 uppercase tracking-widest ml-1">Data</label>
-                      <input type="date" value={item.data} onChange={e => updateReviewItem(idx, 'data', e.target.value)} className={`w-full border-none rounded-xl p-3 text-sm font-bold shadow-sm focus:ring-2 ring-primary/20 text-slate-900 dark:text-white ${item.possivel_duplicata ? 'bg-amber-100 dark:bg-amber-900/30' : 'bg-white dark:bg-slate-900'}`} />
-                    </div>
-                    <div className="flex items-end gap-2">
-                      <div className="space-y-1 flex-1">
-                        <label className="text-[10px] font-black text-slate-400 uppercase tracking-widest ml-1">Hospital</label>
-                        <input type="text" value={item.hospital} onChange={e => updateReviewItem(idx, 'hospital', e.target.value)} className={`w-full border-none rounded-xl p-3 text-sm font-bold shadow-sm focus:ring-2 ring-primary/20 text-slate-900 dark:text-white ${item.possivel_duplicata ? 'bg-amber-100 dark:bg-amber-900/30' : 'bg-white dark:bg-slate-900'}`} />
-                      </div>
-                      <button onClick={() => removeReviewItem(idx)} className="p-3 text-slate-300 hover:text-red-500 hover:bg-red-50 dark:hover:bg-red-950/20 rounded-xl transition-all" title="Remover item">
-                        <span className="material-icons text-xl">delete</span>
-                      </button>
-                    </div>
-                  </div>
-                ))}
+                  );
+                })}
               </div>
               <div className="p-4 sm:p-8 bg-slate-50/50 dark:bg-slate-800/30 border-t border-slate-100 dark:border-slate-800 flex flex-col sm:flex-row justify-end gap-3 sm:gap-4 flex-shrink-0">
                 <button onClick={() => setBatchReviewData(null)} className="w-full sm:w-auto px-6 py-3.5 sm:px-8 sm:py-4 bg-white dark:bg-slate-800 text-slate-500 font-black rounded-2xl shadow-sm hover:bg-slate-100 transition-colors uppercase text-xs tracking-widest">Cancelar</button>
                 <button onClick={saveReviewedBatch} className="w-full sm:w-auto px-8 py-3.5 sm:px-12 sm:py-4 bg-primary text-white font-black rounded-2xl shadow-xl shadow-primary/20 hover:scale-[1.02] active:scale-95 transition-all uppercase text-xs tracking-widest">Confirmar Tudo</button>
               </div>
+            </div>
+          </div>
+        )}
+
+        {/* Lightbox / Zoom da Etiqueta Original */}
+        {previewImage && (
+          <div
+            className="fixed inset-0 bg-slate-950/90 backdrop-blur-md z-[95] flex flex-col items-center justify-center p-4 animate-in fade-in duration-200"
+            onClick={() => setPreviewImage(null)}
+          >
+            <div className="relative max-w-4xl max-h-[90vh] flex flex-col items-center" onClick={e => e.stopPropagation()}>
+              <div className="w-full flex justify-between items-center mb-2 px-2 text-white">
+                <span className="text-xs font-black uppercase tracking-widest flex items-center gap-1.5">
+                  <span className="material-icons text-sm">visibility</span> Foto da Etiqueta Original
+                </span>
+                <button
+                  onClick={() => setPreviewImage(null)}
+                  className="w-9 h-9 flex items-center justify-center bg-white/20 hover:bg-white/40 text-white rounded-full transition-all"
+                  title="Fechar visualização"
+                >
+                  <span className="material-icons text-lg">close</span>
+                </button>
+              </div>
+              <img
+                src={previewImage}
+                alt="Foto da Etiqueta"
+                className="max-w-full max-h-[82vh] object-contain rounded-2xl shadow-2xl border border-white/10"
+              />
             </div>
           </div>
         )}
