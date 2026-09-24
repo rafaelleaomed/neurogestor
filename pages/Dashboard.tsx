@@ -750,23 +750,23 @@ const Dashboard: React.FC<{ onLogout: () => void }> = ({ onLogout }) => {
       <div className="relative z-10">
         {/* Lote Review Modal */}
         {batchReviewData && (
-          <div className="fixed inset-0 bg-slate-900/60 backdrop-blur-xl z-[80] flex items-center justify-center p-4">
-            <div className="bg-white dark:bg-slate-900 w-full max-w-6xl max-h-[90vh] rounded-[2.5rem] shadow-2xl flex flex-col border border-slate-200 dark:border-slate-800 animate-in zoom-in duration-300">
-              <div className="p-8 border-b border-slate-100 dark:border-slate-800 flex justify-between items-center bg-slate-50/50 dark:bg-slate-800/30">
-                <div>
-                  <h3 className="text-2xl font-black text-slate-900 dark:text-white uppercase">Conferência em Lote ({batchReviewData.length})</h3>
-                  <p className="text-slate-400 font-bold text-xs uppercase mt-1 tracking-widest">Revise os dados antes de confirmar o salvamento definitivo</p>
+          <div className="fixed inset-0 bg-slate-900/60 backdrop-blur-xl z-[80] flex items-center justify-center p-3 sm:p-4">
+            <div className="bg-white dark:bg-slate-900 w-full max-w-6xl max-h-[92vh] sm:max-h-[90vh] rounded-3xl sm:rounded-[2.5rem] shadow-2xl flex flex-col border border-slate-200 dark:border-slate-800 animate-in zoom-in duration-300 overflow-hidden">
+              <div className="p-4 sm:p-8 border-b border-slate-100 dark:border-slate-800 flex justify-between items-center bg-slate-50/50 dark:bg-slate-800/30 flex-shrink-0">
+                <div className="min-w-0 pr-2">
+                  <h3 className="text-lg sm:text-2xl font-black text-slate-900 dark:text-white uppercase truncate">Conferência em Lote ({batchReviewData.length})</h3>
+                  <p className="text-slate-400 font-bold text-[10px] sm:text-xs uppercase mt-0.5 sm:mt-1 tracking-widest truncate">Revise os dados antes de confirmar o salvamento</p>
                 </div>
-                <button onClick={() => setBatchReviewData(null)} className="w-10 h-10 flex items-center justify-center bg-white dark:bg-slate-800 rounded-full text-slate-400 hover:text-red-500 transition-all shadow-sm">
+                <button onClick={() => setBatchReviewData(null)} className="w-10 h-10 flex items-center justify-center bg-white dark:bg-slate-800 rounded-full text-slate-400 hover:text-red-500 transition-all shadow-sm flex-shrink-0">
                   <span className="material-icons">close</span>
                 </button>
               </div>
-              <div className="flex-1 overflow-y-auto p-8 space-y-4">
+              <div className="flex-1 overflow-y-auto p-4 sm:p-8 space-y-4">
                 {batchReviewData.map((item, idx) => (
-                  <div key={idx} className={`p-5 rounded-3xl grid grid-cols-1 md:grid-cols-4 gap-4 items-end border transition-colors relative ${item.possivel_duplicata ? 'bg-amber-50 dark:bg-amber-900/20 border-amber-300 dark:border-amber-700 ring-2 ring-amber-200' : 'bg-slate-50 dark:bg-slate-800/40 border-slate-100 dark:border-slate-800 hover:border-primary/30'}`}>
+                  <div key={idx} className={`p-4 sm:p-5 rounded-2xl sm:rounded-3xl grid grid-cols-1 md:grid-cols-4 gap-3 sm:gap-4 items-end border transition-colors relative ${item.possivel_duplicata ? 'bg-amber-50 dark:bg-amber-900/20 border-amber-300 dark:border-amber-700 ring-2 ring-amber-200' : 'bg-slate-50 dark:bg-slate-800/40 border-slate-100 dark:border-slate-800 hover:border-primary/30'}`}>
                     {/* Badge de duplicata */}
                     {item.possivel_duplicata && (
-                      <div className="absolute -top-3 left-6 flex items-center gap-2">
+                      <div className="absolute -top-3 left-4 sm:left-6 flex items-center gap-2">
                         <span className="bg-amber-500 text-white text-[9px] font-black uppercase tracking-widest px-3 py-1 rounded-full shadow-lg flex items-center gap-1">
                           <span className="material-icons text-xs">warning</span> POSSÍVEL DUPLICATA
                         </span>
@@ -799,9 +799,9 @@ const Dashboard: React.FC<{ onLogout: () => void }> = ({ onLogout }) => {
                   </div>
                 ))}
               </div>
-              <div className="p-8 bg-slate-50/50 dark:bg-slate-800/30 border-t border-slate-100 dark:border-slate-800 flex justify-end gap-4">
-                <button onClick={() => setBatchReviewData(null)} className="px-8 py-4 bg-white dark:bg-slate-800 text-slate-500 font-black rounded-2xl shadow-sm hover:bg-slate-100 transition-colors uppercase text-xs tracking-widest">Cancelar</button>
-                <button onClick={saveReviewedBatch} className="px-12 py-4 bg-primary text-white font-black rounded-2xl shadow-xl shadow-primary/20 hover:scale-[1.02] active:scale-95 transition-all uppercase text-xs tracking-widest">Confirmar Tudo</button>
+              <div className="p-4 sm:p-8 bg-slate-50/50 dark:bg-slate-800/30 border-t border-slate-100 dark:border-slate-800 flex flex-col sm:flex-row justify-end gap-3 sm:gap-4 flex-shrink-0">
+                <button onClick={() => setBatchReviewData(null)} className="w-full sm:w-auto px-6 py-3.5 sm:px-8 sm:py-4 bg-white dark:bg-slate-800 text-slate-500 font-black rounded-2xl shadow-sm hover:bg-slate-100 transition-colors uppercase text-xs tracking-widest">Cancelar</button>
+                <button onClick={saveReviewedBatch} className="w-full sm:w-auto px-8 py-3.5 sm:px-12 sm:py-4 bg-primary text-white font-black rounded-2xl shadow-xl shadow-primary/20 hover:scale-[1.02] active:scale-95 transition-all uppercase text-xs tracking-widest">Confirmar Tudo</button>
               </div>
             </div>
           </div>
@@ -1036,9 +1036,51 @@ const Dashboard: React.FC<{ onLogout: () => void }> = ({ onLogout }) => {
                 </button>
                 {showCameraMenu && (
                   <>
-                    <div className="fixed inset-0 z-[45]" onClick={() => setShowCameraMenu(false)}></div>
-                    <div className="absolute right-0 top-full mt-2 bg-white dark:bg-slate-800 rounded-2xl shadow-2xl border border-slate-200 dark:border-slate-700 overflow-hidden z-[46] w-72 animate-in slide-in-from-top-2 duration-200">
-                      <button onClick={() => { cameraInputRef.current?.click(); setShowCameraMenu(false); }} className="w-full px-5 py-4 flex items-center gap-4 hover:bg-slate-50 dark:hover:bg-slate-700 transition-colors text-left">
+                    <div className="fixed inset-0 z-[60] bg-slate-950/60 backdrop-blur-sm" onClick={() => setShowCameraMenu(false)}></div>
+                    
+                    {/* Mobile: Bottom Sheet centralizado e imune a cortes */}
+                    <div className="fixed inset-x-3 bottom-24 z-[65] sm:hidden bg-white dark:bg-slate-900 rounded-3xl shadow-2xl border border-slate-200 dark:border-slate-800 overflow-hidden animate-in slide-in-from-bottom-6 duration-300">
+                      <div className="px-5 py-4 border-b border-slate-100 dark:border-slate-800 flex items-center justify-between bg-slate-50/50 dark:bg-slate-800/30">
+                        <div className="flex items-center gap-2">
+                          <span className="material-icons text-amber-500 text-lg">auto_awesome</span>
+                          <p className="text-xs font-black uppercase tracking-wider text-slate-800 dark:text-white">Leitor de Etiquetas com IA</p>
+                        </div>
+                        <button onClick={() => setShowCameraMenu(false)} className="w-8 h-8 flex items-center justify-center rounded-full bg-slate-100 dark:bg-slate-800 text-slate-400 hover:text-slate-600 transition-colors">
+                          <span className="material-icons text-base">close</span>
+                        </button>
+                      </div>
+                      <div className="p-3 space-y-2">
+                        <button
+                          onClick={() => { cameraInputRef.current?.click(); setShowCameraMenu(false); }}
+                          className="w-full p-4 rounded-2xl bg-amber-500/10 hover:bg-amber-500/20 border border-amber-500/25 flex items-center gap-4 text-left transition-all active:scale-[0.98]"
+                        >
+                          <div className="w-12 h-12 rounded-2xl bg-amber-500 text-white flex items-center justify-center flex-shrink-0 shadow-lg shadow-amber-500/30">
+                            <span className="material-icons text-2xl">photo_camera</span>
+                          </div>
+                          <div>
+                            <p className="text-sm font-black text-slate-900 dark:text-white uppercase tracking-tight">Tirar Foto da Etiqueta</p>
+                            <p className="text-xs text-slate-500 dark:text-slate-400 font-medium mt-0.5">Abrir câmera instantânea do celular</p>
+                          </div>
+                        </button>
+
+                        <button
+                          onClick={() => { batchLabelInputRef.current?.click(); setShowCameraMenu(false); }}
+                          className="w-full p-4 rounded-2xl bg-primary/10 hover:bg-primary/20 border border-primary/25 flex items-center gap-4 text-left transition-all active:scale-[0.98]"
+                        >
+                          <div className="w-12 h-12 rounded-2xl bg-primary text-white flex items-center justify-center flex-shrink-0 shadow-lg shadow-primary/30">
+                            <span className="material-icons text-2xl">photo_library</span>
+                          </div>
+                          <div>
+                            <p className="text-sm font-black text-slate-900 dark:text-white uppercase tracking-tight">Escolher da Galeria</p>
+                            <p className="text-xs text-slate-500 dark:text-slate-400 font-medium mt-0.5">Selecionar uma ou várias imagens</p>
+                          </div>
+                        </button>
+                      </div>
+                    </div>
+
+                    {/* Desktop: Popover dropdown alinhado à esquerda do botão */}
+                    <div className="hidden sm:block absolute left-0 top-full mt-2 bg-white dark:bg-slate-800 rounded-2xl shadow-2xl border border-slate-200 dark:border-slate-700 overflow-hidden z-[46] w-72 animate-in slide-in-from-top-2 duration-200">
+                      <button onClick={() => { cameraInputRef.current?.click(); setShowCameraMenu(false); }} className="w-full px-5 py-4 flex items-center gap-4 hover:bg-slate-50 dark:hover:bg-slate-700 transition-colors text-left cursor-pointer">
                         <div className="w-10 h-10 rounded-xl bg-amber-100 dark:bg-amber-900/30 flex items-center justify-center flex-shrink-0">
                           <span className="material-icons text-amber-600">photo_camera</span>
                         </div>
@@ -1048,7 +1090,7 @@ const Dashboard: React.FC<{ onLogout: () => void }> = ({ onLogout }) => {
                         </div>
                       </button>
                       <div className="h-px bg-slate-100 dark:bg-slate-700"></div>
-                      <button onClick={() => { batchLabelInputRef.current?.click(); setShowCameraMenu(false); }} className="w-full px-5 py-4 flex items-center gap-4 hover:bg-slate-50 dark:hover:bg-slate-700 transition-colors text-left">
+                      <button onClick={() => { batchLabelInputRef.current?.click(); setShowCameraMenu(false); }} className="w-full px-5 py-4 flex items-center gap-4 hover:bg-slate-50 dark:hover:bg-slate-700 transition-colors text-left cursor-pointer">
                         <div className="w-10 h-10 rounded-xl bg-blue-100 dark:bg-blue-900/30 flex items-center justify-center flex-shrink-0">
                           <span className="material-icons text-primary">photo_library</span>
                         </div>
