@@ -663,3 +663,26 @@ export const CONDUTAS_ALARME = [
   'Teste do TOF repetido',
   'Irrigação com soro morno'
 ];
+
+export const CODIGOS_TUSS_SUGESTOES = [
+  { codigo: '4.01.03.54-5', descricao: 'Monitorização neurofisiológica intra-operatória (até 4h)' },
+  { codigo: '4.01.03.55-3', descricao: 'Monitorização neurofisiológica intra-operatória (hora adicional)' },
+  { codigo: '4.01.03.61-8', descricao: 'Potencial evocado somato-sensitivo (PESS)' },
+  { codigo: '4.01.03.62-6', descricao: 'Potencial evocado motor (PEM)' },
+  { codigo: '4.01.03.63-4', descricao: 'Eletromiografia de campo operatório' },
+  { codigo: '4.01.03.64-2', descricao: 'Monitorização de nervos cranianos / Mapeamento' },
+];
+
+export const CID10_SUGESTOES = [
+  { codigo: 'M48.0', descricao: 'Estenose da coluna vertebral' },
+  { codigo: 'M43.1', descricao: 'Espondilolistese' },
+  { codigo: 'M51.1', descricao: 'Transtorno de disco lombar c/ radiculopatia' },
+  { codigo: 'M50.1', descricao: 'Transtorno de disco cervical c/ radiculopatia' },
+  { codigo: 'M41.9', descricao: 'Escoliose' },
+  { codigo: 'C71.9', descricao: 'Neoplasia de encéfalo / Tumor cerebral' },
+  { codigo: 'D32.0', descricao: 'Meningioma cerebral' },
+  { codigo: 'D33.3', descricao: 'Schwannoma vestibular / Neurinoma' },
+  { codigo: 'G56.0', descricao: 'Síndrome do túnel do carpo' },
+  { codigo: 'T09.3', descricao: 'Trauma raquimedular / Fratura vertebral' }
+];
+

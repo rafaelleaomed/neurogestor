@@ -48,6 +48,10 @@ export interface Surgery {
   condutas_alarme?: string[];
   clinical_images?: string[];
   convenio?: string; // Convênio ou Particular (ex: 'Unimed', 'Bradesco', 'Particular')
+  // Faturamento TISS / TUSS (Saúde Suplementar ANS)
+  codigo_tuss?: string; // Ex: '4.01.03.54-5' (Procedimento MNIO) ou '4.01.03.55-3' (Horas adicionais)
+  cid_10?: string; // Ex: 'M48.0' (Estenose), 'M43.1' (Espondilolistese)
+  numero_guia?: string; // Número da guia de autorização / TISS
 }
 
 export type PricingModelType = 'legacy_camarinha' | 'convenio' | 'fixed' | 'category';

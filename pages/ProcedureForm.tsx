@@ -4,7 +4,7 @@ import { getSurgeries, saveSurgery, getDoctors, addDoctor, getHospitals, addHosp
 import { performOCR, generateMnioReport } from '../services/gemini';
 import { Category, Status, Surgery, ComplexityLevel } from '../types';
 import { calculatePrice, formatCurrency, getCategoryFromText, learnCategory, compressImage, normalizeName, normalizeDoctorName, normalizeHospitalName, estimateScrews, classifySurgeryProcedure, normalizeCategory } from '../utils';
-import { SUBTYPES, COMPLEXITY_CONFIG, PORTFOLIO_TAG_SUGGESTIONS, TECNICAS_MNIO, CONDUTAS_ALARME } from '../constants';
+import { SUBTYPES, COMPLEXITY_CONFIG, PORTFOLIO_TAG_SUGGESTIONS, TECNICAS_MNIO, CONDUTAS_ALARME, CODIGOS_TUSS_SUGESTOES, CID10_SUGESTOES } from '../constants';
 
 const ProcedureForm: React.FC = () => {
   const { id } = useParams<{ id: string }>();
@@ -38,6 +38,9 @@ const ProcedureForm: React.FC = () => {
     medico: '',
     hospital: '',
     convenio: '',
+    codigo_tuss: '',
+    cid_10: '',
+    numero_guia: '',
     observacoes: '',
     status: Status.REALIZADO,
     report_text: '',
@@ -74,6 +77,9 @@ const ProcedureForm: React.FC = () => {
           label_images: surgery.label_images || [],
           report_images: surgery.report_images || [],
           convenio: surgery.convenio || '',
+          codigo_tuss: surgery.codigo_tuss || '',
+          cid_10: surgery.cid_10 || '',
+          numero_guia: surgery.numero_guia || '',
           observacoes: surgery.observacoes || surgery.report_text || '',
           valor_personalizado: surgery.valor_personalizado,
           subtipo: surgery.subtipo || '',
@@ -298,6 +304,9 @@ const ProcedureForm: React.FC = () => {
       if (!surgeryBase.convenio) {
         delete surgeryBase.convenio;
       }
+      if (!surgeryBase.codigo_tuss) delete surgeryBase.codigo_tuss;
+      if (!surgeryBase.cid_10) delete surgeryBase.cid_10;
+      if (!surgeryBase.numero_guia) delete surgeryBase.numero_guia;
 
       // Só inclui valor_personalizado se realmente tiver um valor (Firestore não aceita undefined)
       if (useCustomPrice && formData.valor_personalizado) {
@@ -652,6 +661,72 @@ const ProcedureForm: React.FC = () => {
               <datalist id="hospitals-list">
                 {hospitals.map(h => <option key={h} value={h} />)}
               </datalist>
+            </div>
+
+            {/* ─── Faturamento & Padrão TISS (ANS) ─── */}
+            <div className="md:col-span-2 p-6 rounded-[2rem] bg-slate-50 dark:bg-slate-800/40 border border-slate-100 dark:border-slate-800 space-y-4">
+              <div className="flex items-center gap-3">
+                <div className="w-10 h-10 rounded-2xl bg-blue-500/10 text-primary dark:text-blue-400 flex items-center justify-center">
+                  <span className="material-icons text-xl">receipt_long</span>
+                </div>
+                <div>
+                  <h3 className="font-black text-slate-800 dark:text-white uppercase tracking-wider text-xs">Faturamento & Padrão TISS (ANS)</h3>
+                  <p className="text-[11px] text-slate-500 dark:text-slate-400 font-medium">Códigos TUSS e CID-10 para faturamento de convênios e auditoria</p>
+                </div>
+              </div>
+
+              <div className="grid grid-cols-1 md:grid-cols-3 gap-4 pt-2">
+                {/* Código TUSS */}
+                <div className="space-y-1.5">
+                  <label className="text-[10px] font-black text-slate-400 uppercase tracking-wider ml-1">Código TUSS (ANS)</label>
+                  <input
+                    type="text"
+                    list="tuss-list"
+                    name="codigo_tuss"
+                    value={formData.codigo_tuss || ''}
+                    onChange={handleInputChange}
+                    placeholder="Ex: 4.01.03.54-5"
+                    className="w-full bg-white dark:bg-slate-800 border-none rounded-2xl p-4 text-xs font-bold text-slate-900 dark:text-white shadow-inner focus:ring-2 ring-primary/20 transition-all uppercase"
+                  />
+                  <datalist id="tuss-list">
+                    {CODIGOS_TUSS_SUGESTOES.map(t => (
+                      <option key={t.codigo} value={t.codigo}>{t.descricao}</option>
+                    ))}
+                  </datalist>
+                </div>
+
+                {/* CID-10 */}
+                <div className="space-y-1.5">
+                  <label className="text-[10px] font-black text-slate-400 uppercase tracking-wider ml-1">CID-10 Diagnóstico</label>
+                  <input
+                    type="text"
+                    list="cid10-list"
+                    name="cid_10"
+                    value={formData.cid_10 || ''}
+                    onChange={handleInputChange}
+                    placeholder="Ex: M48.0, M43.1..."
+                    className="w-full bg-white dark:bg-slate-800 border-none rounded-2xl p-4 text-xs font-bold text-slate-900 dark:text-white shadow-inner focus:ring-2 ring-primary/20 transition-all uppercase"
+                  />
+                  <datalist id="cid10-list">
+                    {CID10_SUGESTOES.map(c => (
+                      <option key={c.codigo} value={c.codigo}>{c.descricao}</option>
+                    ))}
+                  </datalist>
+                </div>
+
+                {/* Número da Guia TISS */}
+                <div className="space-y-1.5">
+                  <label className="text-[10px] font-black text-slate-400 uppercase tracking-wider ml-1">Nº Guia de Autorização (TISS)</label>
+                  <input
+                    type="text"
+                    name="numero_guia"
+                    value={formData.numero_guia || ''}
+                    onChange={handleInputChange}
+                    placeholder="Nº da Guia (Opcional)"
+                    className="w-full bg-white dark:bg-slate-800 border-none rounded-2xl p-4 text-xs font-bold text-slate-900 dark:text-white shadow-inner focus:ring-2 ring-primary/20 transition-all uppercase"
+                  />
+                </div>
+              </div>
             </div>
 
             {/* ─── Neurogestor 2.0 - Laudo MNIO ─── */}

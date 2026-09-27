@@ -198,6 +198,10 @@ export const exportToExcel = (surgeries: Surgery[], user: User | null, month: st
     'Categoria': s.categoria,
     'Médico': s.medico,
     'Hospital': s.hospital,
+    'Convênio': s.convenio || 'Particular',
+    'Código TUSS': s.codigo_tuss || '',
+    'CID-10': s.cid_10 || '',
+    'Nº Guia': s.numero_guia || '',
     'Valor Estimado': s.valor_estimado,
     'Etiqueta': Array.isArray(s.label_images) && s.label_images.length > 0 ? '✅ SIM' : '❌ NÃO',
     'Relatório': Array.isArray(s.report_images) && s.report_images.length > 0 ? '✅ SIM' : '❌ NÃO'
@@ -213,6 +217,10 @@ export const exportToExcel = (surgeries: Surgery[], user: User | null, month: st
     { wch: 18 }, // Categoria
     { wch: 25 }, // Médico
     { wch: 25 }, // Hospital
+    { wch: 18 }, // Convênio
+    { wch: 15 }, // Código TUSS
+    { wch: 12 }, // CID-10
+    { wch: 16 }, // Nº Guia
     { wch: 15 }, // Valor
     { wch: 10 }, // Etiqueta
     { wch: 10 }, // Relatório

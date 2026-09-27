@@ -214,26 +214,6 @@ export const initStorage = async () => {
       console.error('[NeuroGestor] Erro durante a verificação/migração:', err);
     }
   }
-
-  // Garantir seeding das senhas caso a coleção esteja vazia
-  await seedInitialPasswords();
-};
-
-const seedInitialPasswords = async () => {
-  const existing = await getDocs(collection(db, COLLECTIONS.PASSWORDS));
-  if (existing.empty) {
-    const initial: PasswordEntry[] = [
-      { id: 'madre-teresa', hospital: 'Madre Teresa', system: 'Sistema', login: 'marcos.camarinha', pass: 'MFcda178299' },
-      { id: 'felicio-rocho', hospital: 'Felício Rocho', system: 'Sistema', login: 'M047468', pass: 'm#178299' },
-      { id: 'mater-dei', hospital: 'MaterDei', system: 'Sistema', login: '07310288645', pass: 'Mfca#178299Jgc@' },
-      { id: 'unimed-mv', hospital: 'Unimed', system: 'Sistema MV', login: 'CRM47468 (CPF: 07310288645)', pass: 'Nuvem#01sol' },
-      { id: 'unimed-pc', hospital: 'Unimed', system: 'Login PC', login: 'CRM47468', pass: 'Nuvem#01sol' },
-      { id: 'unimed-ass', hospital: 'Unimed', system: 'Assinatura Eletrônica', login: 'CRM47468', pass: 'Mfca178299#' }
-    ];
-    for (const p of initial) {
-      await setDoc(doc(db, COLLECTIONS.PASSWORDS, p.id), p);
-    }
-  }
 };
 
 /**

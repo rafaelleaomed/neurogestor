@@ -390,16 +390,28 @@ const Dashboard: React.FC<{ onLogout: () => void }> = ({ onLogout }) => {
     });
   }, [mySurgeries, filterYearSurgeries, filterMonthSurgeries, searchTerm, sortOrder, isAdmin]);
 
-  const stats = useMemo(() => {
-    // Cards "Mês Atual" sempre usam o mês/ano REAL do sistema
-    const realMonth = new Date().getMonth() + 1;
+  const isSelectedCurrentMonth = useMemo(() => {
+    const realMonth = (new Date().getMonth() + 1).toString().padStart(2, '0');
     const realYear = new Date().getFullYear().toString();
-    const realMonthPrefix = `${realYear}-${realMonth.toString().padStart(2, '0')}`;
-    const monthSurgeries = mySurgeries.filter(s => s.data.startsWith(realMonthPrefix));
+    return filterYear === realYear && filterMonth === realMonth;
+  }, [filterYear, filterMonth]);
+
+  const selectedMonthLabel = useMemo(() => {
+    const mIndex = parseInt(filterMonth, 10) - 1;
+    if (mIndex >= 0 && mIndex < 12) {
+      return new Date(2000, mIndex).toLocaleString('pt-BR', { month: 'long' });
+    }
+    return '';
+  }, [filterMonth]);
+
+  const stats = useMemo(() => {
+    // Cards do Mês usam o mês e ano selecionados
+    const selectedMonthPrefix = `${filterYear}-${filterMonth}`;
+    const monthSurgeries = mySurgeries.filter(s => s.data.startsWith(selectedMonthPrefix));
     const yearSurgeries = mySurgeries.filter(s => s.data.startsWith(filterYear));
 
     // Cálculo do Tempo Médio e Ganhos por Hora
-    // Filtra cirurgias baseado no período selecionado (Mês Atual ou Geral)
+    // Filtra cirurgias baseado no período selecionado (Mês Selecionado ou Geral)
     const timeTargetSurgeries = avgTimePeriod === 'month' ? monthSurgeries : yearSurgeries;
 
     const surgeriesWithTime = timeTargetSurgeries.filter(s => s.hora_inicio && s.hora_fim);
@@ -432,13 +444,11 @@ const Dashboard: React.FC<{ onLogout: () => void }> = ({ onLogout }) => {
       avgDuration: avgDurationStr,
       hourlyRate: hourlyRate
     };
-  }, [mySurgeries, filterYear, avgTimePeriod]);
+  }, [mySurgeries, filterYear, filterMonth, avgTimePeriod]);
 
   // ── Estimativa de Parafusos ──────────────────────────────────
   const screwStats = useMemo(() => {
-    const realMonth = new Date().getMonth() + 1;
-    const realYear = new Date().getFullYear().toString();
-    const realMonthPrefix = `${realYear}-${realMonth.toString().padStart(2, '0')}`;
+    const selectedMonthPrefix = `${filterYear}-${filterMonth}`;
 
     const getScrew = (s: Surgery) => {
       const subtipo = (s.subtipo || '').toLowerCase();
@@ -452,11 +462,11 @@ const Dashboard: React.FC<{ onLogout: () => void }> = ({ onLogout }) => {
       .filter(s => s.data.startsWith(filterYear))
       .reduce((acc, s) => acc + getScrew(s), 0);
     const totalMonth = mySurgeries
-      .filter(s => s.data.startsWith(realMonthPrefix))
+      .filter(s => s.data.startsWith(selectedMonthPrefix))
       .reduce((acc, s) => acc + getScrew(s), 0);
 
     return { totalAll, totalYear, totalMonth };
-  }, [mySurgeries, filterYear]);
+  }, [mySurgeries, filterYear, filterMonth]);
 
   const doctorSummaries = useMemo(() => {
     // Calculamos o resumo baseado no filtro de ano atual
@@ -504,10 +514,8 @@ const Dashboard: React.FC<{ onLogout: () => void }> = ({ onLogout }) => {
 
   const categoryChartData = useMemo(() => {
     const map: Record<string, number> = {};
-    const realMonth = new Date().getMonth() + 1;
-    const realYear = new Date().getFullYear().toString();
-    const realMonthPrefix = `${realYear}-${realMonth.toString().padStart(2, '0')}`;
-    const prefix = mixPeriod === 'month' ? realMonthPrefix : mixPeriod === 'year' ? filterYear : '';
+    const selectedMonthPrefix = `${filterYear}-${filterMonth}`;
+    const prefix = mixPeriod === 'month' ? selectedMonthPrefix : mixPeriod === 'year' ? filterYear : '';
 
     const filtered = mixPeriod === 'total' ? mySurgeries : mySurgeries.filter(s => s.data.startsWith(prefix));
     filtered.forEach(s => {
@@ -515,17 +523,15 @@ const Dashboard: React.FC<{ onLogout: () => void }> = ({ onLogout }) => {
       map[cat] = (map[cat] || 0) + 1;
     });
     return Object.entries(map).map(([name, value]) => ({ name, value }));
-  }, [mySurgeries, filterYear, mixPeriod]);
+  }, [mySurgeries, filterYear, filterMonth, mixPeriod]);
 
   const topSurgeons = useMemo(() => {
     const counts: Record<string, { displayName: string; count: number }> = {};
-    const realMonth = new Date().getMonth() + 1;
-    const realYear = new Date().getFullYear().toString();
-    const realMonthPrefix = `${realYear}-${realMonth.toString().padStart(2, '0')}`;
+    const selectedMonthPrefix = `${filterYear}-${filterMonth}`;
 
     let filtered: Surgery[];
     if (rankingPeriod === 'month') {
-      filtered = mySurgeries.filter(s => s.data.startsWith(realMonthPrefix));
+      filtered = mySurgeries.filter(s => s.data.startsWith(selectedMonthPrefix));
     } else if (rankingPeriod === 'year') {
       filtered = mySurgeries.filter(s => s.data.startsWith(filterYear));
     } else {
@@ -546,17 +552,15 @@ const Dashboard: React.FC<{ onLogout: () => void }> = ({ onLogout }) => {
     const sorted = Object.values(counts).sort((a, b) => b.count - a.count);
     const max = Math.max(...sorted.map(s => s.count), 1);
     return sorted.map(({ displayName, count }) => ({ name: displayName, count, percentage: (count / max) * 100 }));
-  }, [mySurgeries, rankingPeriod, filterYear]);
+  }, [mySurgeries, rankingPeriod, filterYear, filterMonth]);
 
   const topHospitals = useMemo(() => {
     const counts: Record<string, { displayName: string; count: number }> = {};
-    const realMonth = new Date().getMonth() + 1;
-    const realYear = new Date().getFullYear().toString();
-    const realMonthPrefix = `${realYear}-${realMonth.toString().padStart(2, '0')}`;
+    const selectedMonthPrefix = `${filterYear}-${filterMonth}`;
 
     let filtered: Surgery[];
     if (rankingPeriod === 'month') {
-      filtered = mySurgeries.filter(s => s.data.startsWith(realMonthPrefix));
+      filtered = mySurgeries.filter(s => s.data.startsWith(selectedMonthPrefix));
     } else if (rankingPeriod === 'year') {
       filtered = mySurgeries.filter(s => s.data.startsWith(filterYear));
     } else {
@@ -577,7 +581,7 @@ const Dashboard: React.FC<{ onLogout: () => void }> = ({ onLogout }) => {
     const sorted = Object.values(counts).sort((a, b) => b.count - a.count);
     const max = Math.max(...sorted.map(s => s.count), 1);
     return sorted.map(({ displayName, count }) => ({ name: displayName, count, percentage: (count / max) * 100 }));
-  }, [mySurgeries, rankingPeriod, filterYear]);
+  }, [mySurgeries, rankingPeriod, filterYear, filterMonth]);
 
   const yoyComparisonData = useMemo(() => {
     const months = ['Jan', 'Fev', 'Mar', 'Abr', 'Mai', 'Jun', 'Jul', 'Ago', 'Set', 'Out', 'Nov', 'Dez'];
@@ -1475,6 +1479,81 @@ const Dashboard: React.FC<{ onLogout: () => void }> = ({ onLogout }) => {
                 </div>
               )}
 
+              {/* Seletor de Período do Painel (Mês & Ano) */}
+              <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-4 bg-white/70 dark:bg-slate-900/70 backdrop-blur-xl p-4 sm:p-5 rounded-3xl border border-white/20 dark:border-slate-800/60 shadow-xl shadow-slate-200/10 dark:shadow-none">
+                <div className="flex items-center gap-3">
+                  <div className="w-10 h-10 rounded-2xl bg-primary/10 dark:bg-primary/20 text-primary dark:text-blue-400 flex items-center justify-center flex-shrink-0">
+                    <span className="material-icons text-xl">calendar_month</span>
+                  </div>
+                  <div>
+                    <div className="flex items-center gap-2">
+                      <span className="text-xs sm:text-sm font-black text-slate-800 dark:text-white capitalize">
+                        {selectedMonthLabel} de {filterYear}
+                      </span>
+                      {isSelectedCurrentMonth ? (
+                        <span className="inline-flex items-center gap-1 px-2.5 py-0.5 rounded-full text-[9px] font-black bg-emerald-500/10 text-emerald-600 dark:text-emerald-400 border border-emerald-500/20">
+                          <span className="w-1.5 h-1.5 rounded-full bg-emerald-500 animate-pulse"></span>
+                          Mês Atual
+                        </span>
+                      ) : (
+                        <span className="inline-flex items-center gap-1 px-2.5 py-0.5 rounded-full text-[9px] font-black bg-blue-500/10 text-primary dark:text-blue-400 border border-primary/20">
+                          <span className="material-icons text-[10px]">history</span>
+                          Histórico
+                        </span>
+                      )}
+                    </div>
+                    <p className="text-[11px] text-slate-400 font-medium">Selecione o mês e ano para visualizar a performance e métricas retrospectivas</p>
+                  </div>
+                </div>
+
+                <div className="flex items-center gap-2 flex-wrap self-end sm:self-auto">
+                  {/* Dropdown Mês */}
+                  <div className="relative">
+                    <select
+                      value={filterMonth}
+                      onChange={(e) => setFilterMonth(e.target.value)}
+                      className="bg-slate-50 dark:bg-slate-800 text-slate-700 dark:text-slate-200 text-xs font-black pl-3 pr-8 py-2.5 rounded-2xl border border-slate-200 dark:border-slate-700 focus:outline-none focus:ring-2 focus:ring-primary shadow-sm appearance-none cursor-pointer uppercase tracking-wider"
+                    >
+                      {Array.from({ length: 12 }, (_, i) => {
+                        const val = (i + 1).toString().padStart(2, '0');
+                        const name = new Date(2000, i).toLocaleString('pt-BR', { month: 'long' });
+                        return <option key={val} value={val}>{name.toUpperCase()}</option>;
+                      })}
+                    </select>
+                    <span className="material-icons absolute right-2.5 top-1/2 -translate-y-1/2 text-sm text-slate-400 pointer-events-none">expand_more</span>
+                  </div>
+
+                  {/* Dropdown Ano */}
+                  <div className="relative">
+                    <select
+                      value={filterYear}
+                      onChange={(e) => setFilterYear(e.target.value)}
+                      className="bg-slate-50 dark:bg-slate-800 text-slate-700 dark:text-slate-200 text-xs font-black pl-3 pr-8 py-2.5 rounded-2xl border border-slate-200 dark:border-slate-700 focus:outline-none focus:ring-2 focus:ring-primary shadow-sm appearance-none cursor-pointer tracking-wider"
+                    >
+                      {availableYears.map(y => (
+                        <option key={y} value={y}>{y}</option>
+                      ))}
+                    </select>
+                    <span className="material-icons absolute right-2.5 top-1/2 -translate-y-1/2 text-sm text-slate-400 pointer-events-none">expand_more</span>
+                  </div>
+
+                  {/* Atalho "Mês Atual" se o usuário estiver vendo um mês anterior ou outro ano */}
+                  {!isSelectedCurrentMonth && (
+                    <button
+                      onClick={() => {
+                        setFilterYear(new Date().getFullYear().toString());
+                        setFilterMonth((new Date().getMonth() + 1).toString().padStart(2, '0'));
+                      }}
+                      className="px-3.5 py-2.5 bg-primary/10 hover:bg-primary/20 text-primary dark:text-blue-300 text-xs font-black rounded-2xl transition-all flex items-center gap-1.5 active:scale-95 shadow-sm"
+                      title="Voltar instantaneamente para o mês atual"
+                    >
+                      <span className="material-icons text-sm">today</span>
+                      <span className="text-[10px] uppercase tracking-wider">Mês Atual</span>
+                    </button>
+                  )}
+                </div>
+              </div>
+
               {/* Stats Cards */}
               <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-5 gap-4 sm:gap-6">
 
@@ -1488,8 +1567,10 @@ const Dashboard: React.FC<{ onLogout: () => void }> = ({ onLogout }) => {
                   <div className="relative z-10 flex flex-col h-full min-h-[120px] justify-between">
                     <div className="flex items-center justify-between mb-3">
                       <div className="flex items-center gap-2">
-                        <div className="w-1.5 h-1.5 rounded-full bg-blue-300 animate-pulse" />
-                        <p className="text-[10px] font-black uppercase text-blue-200 tracking-widest">Mês Atual</p>
+                        <div className={`w-1.5 h-1.5 rounded-full ${isSelectedCurrentMonth ? 'bg-blue-300 animate-pulse' : 'bg-sky-300'}`} />
+                        <p className="text-[10px] font-black uppercase text-blue-200 tracking-widest">
+                          {isSelectedCurrentMonth ? 'Mês Atual' : `${selectedMonthLabel} / ${filterYear}`}
+                        </p>
                       </div>
                       <div className="w-9 h-9 rounded-xl bg-white/10 flex items-center justify-center">
                         <span className="material-icons text-lg text-blue-200">monitor_heart</span>
@@ -1510,8 +1591,10 @@ const Dashboard: React.FC<{ onLogout: () => void }> = ({ onLogout }) => {
                     <div className="relative z-10 flex flex-col h-full min-h-[120px] justify-between">
                       <div className="flex items-center justify-between mb-3">
                         <div className="flex items-center gap-2">
-                          <div className="w-1.5 h-1.5 rounded-full bg-emerald-300 animate-pulse" />
-                          <p className="text-[10px] font-black uppercase text-emerald-200 tracking-widest">Mês Atual</p>
+                          <div className={`w-1.5 h-1.5 rounded-full ${isSelectedCurrentMonth ? 'bg-emerald-300 animate-pulse' : 'bg-teal-200'}`} />
+                          <p className="text-[10px] font-black uppercase text-emerald-200 tracking-widest">
+                            {isSelectedCurrentMonth ? 'Mês Atual' : `${selectedMonthLabel} / ${filterYear}`}
+                          </p>
                         </div>
                         <div className="w-9 h-9 rounded-xl bg-white/10 flex items-center justify-center">
                           <span className="material-icons text-lg text-emerald-200">payments</span>
@@ -1534,7 +1617,9 @@ const Dashboard: React.FC<{ onLogout: () => void }> = ({ onLogout }) => {
                       <div className="flex items-center justify-between mb-3">
                         <div className="flex items-center gap-2">
                           <div className="w-1.5 h-1.5 rounded-full bg-rose-300 animate-pulse" />
-                          <p className="text-[10px] font-black uppercase text-rose-200 tracking-widest">{avgTimePeriod === 'month' ? 'Tempo/Mês' : 'Tempo Geral'}</p>
+                          <p className="text-[10px] font-black uppercase text-rose-200 tracking-widest">
+                            {avgTimePeriod === 'month' ? (isSelectedCurrentMonth ? 'Tempo/Mês' : `Tempo/${selectedMonthLabel.slice(0, 3)}`) : 'Tempo Geral'}
+                          </p>
                         </div>
                         <div className="flex bg-white/10 rounded-lg p-0.5">
                           <button onClick={() => setAvgTimePeriod('month')} className={`px-2 py-1 rounded-md text-[8px] font-black uppercase tracking-tighter transition-all ${avgTimePeriod === 'month' ? 'bg-white text-rose-600 shadow-sm' : 'text-rose-100'}`}>Mês</button>
@@ -2577,6 +2662,42 @@ const Dashboard: React.FC<{ onLogout: () => void }> = ({ onLogout }) => {
                       </div>
                     )}
                   </div>
+
+                  {/* Dados de Faturamento & TISS (ANS) */}
+                  {(selectedSurgery.convenio || selectedSurgery.codigo_tuss || selectedSurgery.cid_10 || selectedSurgery.numero_guia) && (
+                    <div className="pt-4 sm:pt-6 border-t border-slate-100 dark:border-slate-800 space-y-3">
+                      <div className="flex items-center gap-2">
+                        <span className="material-icons text-sm text-primary dark:text-blue-400">receipt_long</span>
+                        <label className="text-[10px] font-black text-slate-400 uppercase tracking-widest">Faturamento & Padrão TISS (ANS)</label>
+                      </div>
+                      <div className="grid grid-cols-2 sm:grid-cols-4 gap-3 bg-slate-50 dark:bg-slate-800/40 p-3 sm:p-4 rounded-2xl border border-slate-100 dark:border-slate-800">
+                        {selectedSurgery.convenio && (
+                          <div>
+                            <span className="text-[9px] font-bold text-slate-400 uppercase tracking-wider block">Convênio</span>
+                            <span className="text-xs sm:text-sm font-black text-slate-800 dark:text-white">{selectedSurgery.convenio}</span>
+                          </div>
+                        )}
+                        {selectedSurgery.codigo_tuss && (
+                          <div>
+                            <span className="text-[9px] font-bold text-slate-400 uppercase tracking-wider block">Código TUSS</span>
+                            <span className="text-xs sm:text-sm font-black text-primary dark:text-blue-400">{selectedSurgery.codigo_tuss}</span>
+                          </div>
+                        )}
+                        {selectedSurgery.cid_10 && (
+                          <div>
+                            <span className="text-[9px] font-bold text-slate-400 uppercase tracking-wider block">CID-10</span>
+                            <span className="text-xs sm:text-sm font-black text-slate-800 dark:text-white">{selectedSurgery.cid_10}</span>
+                          </div>
+                        )}
+                        {selectedSurgery.numero_guia && (
+                          <div>
+                            <span className="text-[9px] font-bold text-slate-400 uppercase tracking-wider block">Nº Guia TISS</span>
+                            <span className="text-xs sm:text-sm font-black text-slate-800 dark:text-white">{selectedSurgery.numero_guia}</span>
+                          </div>
+                        )}
+                      </div>
+                    </div>
+                  )}
 
                   {/* Portfólio e Complexidade (se configurado) */}
                   {(selectedSurgery.is_portfolio || selectedSurgery.complexity_level || (selectedSurgery.portfolio_tags && selectedSurgery.portfolio_tags.length > 0) || selectedSurgery.portfolio_notes) && (

@@ -62,7 +62,9 @@ Rather than treating Artificial Intelligence as an autonomous decision-maker, Ne
 - **Unstructured Text Parsing**: Extracting operational metadata (anatomical levels, surgical approach) from raw operative summaries;
 - **Procedural Taxonomy Suggestions**: Suggesting canonical classifications (e.g., *Spine: Anterior Cervical Discectomy & Fusion (ACDF)* vs. *Lumbar TLIF*);
 - **AI-Assisted IONM Reporting**: Automated drafting of structured intraoperative monitoring reports and technical minutas tailored to specific neurosurgical or orthopedic procedures, with mandatory physician review and instant in-place editing;
-- **Multimodal Portfolio Synthesis**: Synthesizes clinical highlights, procedure timelines, and embeds intraoperative clinical photos, monitor screenshots, and implant labels into professional PDF dossiers and PowerPoint (PPTX) presentations.
+- **Multimodal Portfolio Synthesis**: Synthesizes clinical highlights, procedure timelines, and embeds intraoperative clinical photos, monitor screenshots, and implant labels into professional PDF dossiers and PowerPoint (PPTX) presentations;
+- **Retrospective Period Analytics**: Interactive month-and-year selector on the main performance dashboard, enabling instant retrospective analysis of surgical volume, estimated revenue, average duration, and surgeon rankings, with quick reset to the active month;
+- **TISS / TUSS & ICD-10 Healthcare Interoperability**: Structured capture of Brazilian Supplementary Health standard codes (ANS TUSS e.g. `4.01.03.54-5`, `4.01.03.55-3`, `4.01.03.61-8`), ICD-10 diagnostics, and insurance authorization identifiers, fully integrated into spreadsheet exports and clinical case audits.
 
 ### Clinical AI Principles
 - **No Autonomous Writes**: AI suggestions are staged in a transient validation state. A human physician must explicitly review and confirm any parsed parameter before it is committed to the medical record.
@@ -101,6 +103,7 @@ To resolve the tension between daily clinical utility (where the physician must 
 - **CFM Resolution nº 2.336/2023**: All portfolio case views are restricted to scientific, educational, and professional auditing purposes, strictly prohibiting commercial sensationalism or guarantees of clinical outcomes.
 - **Support & DPO Contact**: Direct transparency and privacy inquiry channel available to all users (`medleaobh@gmail.com`).
 - **Backend Least Privilege**: Replaced open database access with authenticated Role-Based Access Control (RBAC) and explicit security rules on Firestore and Storage.
+- **Zero Hardcoded Secrets**: Complete elimination of client-bundled credentials and static passwords; institutional portal credentials are fully encrypted and delegated to authenticated, team-segregated database records.
 
 ---
 
