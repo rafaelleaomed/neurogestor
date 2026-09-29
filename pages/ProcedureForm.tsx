@@ -360,11 +360,11 @@ const ProcedureForm: React.FC = () => {
       const surgery = surgeryBase as Surgery;
 
       await saveSurgery(surgery);
-      if (normalizedMedico) addDoctor(normalizedMedico);
-      if (normalizedHospital) addHospital(normalizedHospital);
+      if (normalizedMedico && !currentUser?.is_demo) addDoctor(normalizedMedico);
+      if (normalizedHospital && !currentUser?.is_demo) addHospital(normalizedHospital);
 
       // Auto-aprender a categoria selecionada pelo usuário para este procedimento
-      if (formData.procedimento && formData.categoria) {
+      if (formData.procedimento && formData.categoria && !currentUser?.is_demo) {
         learnCategory(formData.procedimento, formData.categoria);
       }
 
@@ -403,7 +403,9 @@ const ProcedureForm: React.FC = () => {
             </button>
             <div>
               <h2 className="text-2xl font-black text-slate-900 dark:text-white leading-none">{id ? 'Editar' : 'Nova'} Cirurgia</h2>
-              <p className="text-slate-400 text-[10px] font-bold uppercase tracking-widest mt-1">Gestão Equipe Camarinha</p>
+              <p className="text-slate-400 text-[10px] font-bold uppercase tracking-widest mt-1">
+                {currentUser?.is_demo ? 'Modo Demonstração (Simulação)' : (currentUser?.team_name || 'Gestão Cirúrgica')}
+              </p>
             </div>
           </div>
         </div>

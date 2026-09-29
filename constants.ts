@@ -9,11 +9,11 @@ export const DEMO_USER: User = {
   email: 'visitante@neurogestor.demo',
   name: 'Visitante (Modo Demonstração)',
   status: 'APPROVED',
-  role: 'owner',
+  role: 'user',
   onboarding_completed: true,
-  financial_config: { pricing_model: 'legacy_camarinha' },
-  team_id: 'camarinha',
-  team_name: 'Equipe Camarinha',
+  financial_config: { pricing_model: 'fixed', default_fee: 1000 },
+  team_id: 'demonstracao',
+  team_name: 'Equipe Demonstração',
   is_demo: true,
 };
 

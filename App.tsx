@@ -20,7 +20,8 @@ const App: React.FC = () => {
     // Se o visitante acessou via #/demo ou ?demo=true, inicializa imediatamente a sessão de demonstração
     const hash = window.location.hash || '';
     const search = window.location.search || '';
-    if ((hash.includes('/demo') || search.includes('demo=true')) && !getSession()) {
+    const isEnteringDemo = hash.includes('/demo') || search.includes('demo=true');
+    if (isEnteringDemo && (!getSession() || !isDemoUser(getSession()))) {
       setSession(DEMO_USER);
       setUser(DEMO_USER);
     }
@@ -30,6 +31,16 @@ const App: React.FC = () => {
       document.documentElement.classList.add('dark');
     } else {
       document.documentElement.classList.remove('dark');
+    }
+
+    const currentSession = getSession();
+    const isDemo = isDemoUser(currentSession) || isEnteringDemo;
+
+    // SE ESTIVER EM MODO DEMONSTRAÇÃO: ISOLAMENTO TOTAL!
+    // Não conecta ao Firestore, não altera usuários, não reprocessa dados reais.
+    if (isDemo) {
+      console.log('[NeuroGestor] 🛡️ Modo Demonstração: Isolamento ativo contra acesso a dados reais.');
+      return;
     }
 
     // Inicializa Firestore listeners e migra dados do localStorage
@@ -59,7 +70,7 @@ const App: React.FC = () => {
     });
 
     const activeSession = getSession();
-    if (activeSession) {
+    if (activeSession && !activeSession.is_demo) {
       let sessionChanged = false;
       if (activeSession.onboarding_completed === undefined) {
         activeSession.onboarding_completed = true;
@@ -285,6 +296,9 @@ const App: React.FC = () => {
       setSession(foundUser);
       setUser(foundUser);
       setLoading(false);
+      if (!isDemoUser(foundUser)) {
+        initStorage();
+      }
     }, 1000);
   };
 

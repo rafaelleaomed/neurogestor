@@ -7,7 +7,8 @@ import {
 import { firebaseStorage } from './firebase';
 import { ref, uploadBytes, getDownloadURL } from 'firebase/storage';
 import { Surgery, Category, User, PasswordEntry, ReportTemplate, ElectrodeModel, LearnedCategory } from '../types';
-import { SEED_DOCTORS, SEED_HOSPITALS } from '../constants';
+import { SEED_DOCTORS, SEED_HOSPITALS, isDemoUser, DEMO_USER } from '../constants';
+import { getDemoMockSurgeries, saveDemoMockSurgery, DEMO_FICTITIOUS_PASSWORDS } from './mockDemoData';
 
 // ============================================================
 // FIREBASE STORAGE — Upload de imagens
@@ -96,6 +97,11 @@ const listeners = {
 };
 
 export const subscribeToPasswords = (cb: DataCallback<PasswordEntry>) => {
+  const user = getSession();
+  if (user && (user.is_demo || isDemoUser(user))) {
+    cb(DEMO_FICTITIOUS_PASSWORDS);
+    return () => {};
+  }
   listeners.passwords.push(cb);
   if (passwordsCache) cb(passwordsCache);
   return () => { listeners.passwords = listeners.passwords.filter(l => l !== cb); };
@@ -123,6 +129,11 @@ export const subscribeToElectrodes = (cb: DataCallback<ElectrodeModel>) => {
  * - Migra dados antigos do localStorage se existirem.
  */
 export const initStorage = async () => {
+  const currentSession = getSession();
+  if (currentSession && (currentSession.is_demo || isDemoUser(currentSession))) {
+    console.log('[NeuroGestor] Modo Demonstração: Listeners do Firestore desativados para isolamento total de dados reais.');
+    return;
+  }
   if (surgeriesUnsub) return;
 
   // Listener de cirurgias em tempo real
@@ -309,6 +320,10 @@ const cleanUndefined = <T extends Record<string, any>>(obj: T): T => {
 // ============================================================
 
 export const getSurgeries = (): Surgery[] => {
+  const user = getSession();
+  if (user && (user.is_demo || isDemoUser(user))) {
+    return getDemoMockSurgeries();
+  }
   if (surgeriesCache !== null) return surgeriesCache;
   // Fallback para localStorage (offline ou antes do listener conectar)
   const data = localStorage.getItem(LOCAL_KEYS.SURGERIES);
@@ -317,6 +332,10 @@ export const getSurgeries = (): Surgery[] => {
 
 export const saveSurgery = async (surgery: Surgery) => {
   const user = getSession();
+  if (user && (user.is_demo || isDemoUser(user))) {
+    saveDemoMockSurgery(surgery);
+    return;
+  }
   const surgeryWithOwner = cleanUndefined({
     ...surgery,
     owner_email: surgery.owner_email || user?.email || 'legacy'
@@ -344,6 +363,10 @@ export const saveSurgeriesBatch = async (newSurgeries: Surgery[]): Promise<numbe
   if (!newSurgeries || newSurgeries.length === 0) return 0;
 
   const user = getSession();
+  if (user && (user.is_demo || isDemoUser(user))) {
+    newSurgeries.forEach(s => saveDemoMockSurgery(s));
+    return newSurgeries.length;
+  }
   const existing = getSurgeries();
   const toAdd: Surgery[] = [];
 
@@ -426,10 +449,14 @@ export const saveSurgeriesBatch = async (newSurgeries: Surgery[]): Promise<numbe
 
 export const updateSurgeriesBatch = async (updatedSurgeries: Surgery[]) => {
   if (updatedSurgeries.length === 0) return;
+  const user = getSession();
+  if (user && (user.is_demo || isDemoUser(user))) {
+    updatedSurgeries.forEach(s => saveDemoMockSurgery(s));
+    return;
+  }
 
   // Salva no Firestore em batches (Update/Set com merge)
   try {
-    const user = getSession();
     const batchSize = 450;
     for (let i = 0; i < updatedSurgeries.length; i += batchSize) {
       const batch = writeBatch(db);
@@ -464,6 +491,10 @@ export const updateSurgeriesBatch = async (updatedSurgeries: Surgery[]) => {
 
 export const deleteSurgery = async (id: string) => {
   if (!id) return;
+  const user = getSession();
+  if (user && (user.is_demo || isDemoUser(user))) {
+    return;
+  }
   try {
     await deleteDoc(doc(db, COLLECTIONS.SURGERIES, id));
   } catch (err) {
@@ -486,6 +517,10 @@ export const deleteSurgery = async (id: string) => {
 
 export const deleteSurgeriesBatch = async (ids: string[], onProgress?: (progress: number) => void) => {
   if (!ids || ids.length === 0) return;
+  const user = getSession();
+  if (user && (user.is_demo || isDemoUser(user))) {
+    return;
+  }
 
   // Filtrar e deduplicar IDs válidos
   const validIds = Array.from(new Set(ids.filter((id): id is string => typeof id === 'string' && id.trim().length > 0)));
@@ -696,6 +731,10 @@ const cleanUndefinedForFirestore = (obj: any): any => {
 };
 
 export const getUsers = (): User[] => {
+  const user = getSession();
+  if (user && (user.is_demo || isDemoUser(user))) {
+    return [DEMO_USER];
+  }
   if (usersCache !== null && usersCache.length > 0) {
     return [...usersCache];
   }
@@ -705,6 +744,10 @@ export const getUsers = (): User[] => {
 };
 
 export const saveUser = async (user: User) => {
+  const currentSession = getSession();
+  if (currentSession && (currentSession.is_demo || isDemoUser(currentSession))) {
+    return;
+  }
   const cleanEmail = user.email.toLowerCase();
   const cleanUser = cleanUndefinedForFirestore({ ...user, email: cleanEmail });
 
@@ -959,16 +1002,30 @@ export const addHospital = async (name: string) => {
 // ============================================================
 
 export const getPasswords = (): PasswordEntry[] => {
+  const user = getSession();
+  if (user && (user.is_demo || isDemoUser(user))) {
+    return DEMO_FICTITIOUS_PASSWORDS;
+  }
   if (passwordsCache) return passwordsCache;
   const data = localStorage.getItem(LOCAL_KEYS.PASSWORDS);
   return data ? JSON.parse(data) : [];
 };
 
 export const savePassword = async (pw: PasswordEntry) => {
+  const user = getSession();
+  if (user && (user.is_demo || isDemoUser(user))) {
+    console.warn('[NeuroGestor] Salvar senha bloqueado em modo demonstração.');
+    return;
+  }
   await setDoc(doc(db, COLLECTIONS.PASSWORDS, pw.id), pw);
 };
 
 export const deletePassword = async (id: string) => {
+  const user = getSession();
+  if (user && (user.is_demo || isDemoUser(user))) {
+    console.warn('[NeuroGestor] Excluir senha bloqueado em modo demonstração.');
+    return;
+  }
   await deleteDoc(doc(db, COLLECTIONS.PASSWORDS, id));
 };
 
@@ -1185,6 +1242,11 @@ export const saveLearnedCategoryGlobal = async (procedureName: string, category:
 // ============================================================
 
 export const exportFullBackup = async () => {
+  const user = getSession();
+  if (user && (user.is_demo || isDemoUser(user))) {
+    console.warn('[NeuroGestor] Backup bloqueado em modo demonstração.');
+    return false;
+  }
   try {
     const backup: any = {
       timestamp: new Date().toISOString(),

@@ -19,7 +19,7 @@ const AdminPanel: React.FC = () => {
   const [isNormalizing, setIsNormalizing] = useState(false);
 
   useEffect(() => {
-    const isAuthorized = currentUser?.role === 'admin' || currentUser?.role === 'owner' || currentUser?.email === ADMIN_EMAIL;
+    const isAuthorized = !currentUser?.is_demo && (currentUser?.role === 'admin' || currentUser?.role === 'owner' || currentUser?.email === ADMIN_EMAIL);
     if (!isAuthorized) {
       navigate('/dashboard');
     }

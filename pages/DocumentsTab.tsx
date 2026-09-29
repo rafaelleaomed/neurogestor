@@ -9,7 +9,8 @@ import { generateReportTemplateFromProcedure } from '../services/gemini';
 import { isAdminUser } from '../constants';
 
 export const DocumentsTab: React.FC<{ isDarkMode: boolean; currentUser?: User | null }> = ({ isDarkMode, currentUser }) => {
-    const isCamarinhaMember = currentUser?.team_id === 'camarinha' || currentUser?.financial_config?.pricing_model === 'legacy_camarinha' || (currentUser?.email && isAdminUser(currentUser.email));
+    const isDemo = !!currentUser?.is_demo;
+    const isCamarinhaMember = !isDemo && (currentUser?.team_id === 'camarinha' || currentUser?.financial_config?.pricing_model === 'legacy_camarinha' || (currentUser?.email && isAdminUser(currentUser.email)));
     const [activeSubTab, setActiveSubTab] = useState<'passwords' | 'reports' | 'electrodes'>(isCamarinhaMember ? 'passwords' : 'reports');
 
     // Passwords
@@ -46,13 +47,23 @@ export const DocumentsTab: React.FC<{ isDarkMode: boolean; currentUser?: User | 
     const [showElecForm, setShowElecForm] = useState(false);
 
     useEffect(() => {
+        if (isDemo || !isCamarinhaMember) {
+            setPasswords([]);
+            const unsubR = subscribeToReports(setReports);
+            const unsubE = subscribeToElectrodes(setElectrodes);
+            return () => { unsubR(); unsubE(); };
+        }
         const unsubP = subscribeToPasswords(setPasswords);
         const unsubR = subscribeToReports(setReports);
         const unsubE = subscribeToElectrodes(setElectrodes);
         return () => { unsubP(); unsubR(); unsubE(); };
-    }, []);
+    }, [isDemo, isCamarinhaMember]);
 
     const handleSavePassword = async () => {
+        if (isDemo) {
+            alert('Modo Demonstração: Cadastro e alteração de senhas estão bloqueados por governança.');
+            return;
+        }
         if (!pwForm.hospital?.trim()) {
             alert('O hospital é obrigatório para cadastrar uma senha.');
             return;
@@ -95,6 +106,10 @@ export const DocumentsTab: React.FC<{ isDarkMode: boolean; currentUser?: User | 
     };
 
     const handleDeletePassword = async (id: string) => {
+        if (isDemo) {
+            alert('Modo Demonstração: Exclusão de senhas bloqueada.');
+            return;
+        }
         if (!window.confirm('Excluir senha?')) return;
         await deletePassword(id);
     };

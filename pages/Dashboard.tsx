@@ -10,6 +10,7 @@ import { Surgery, Category, User } from '../types';
 import { ADMIN_EMAIL, ADMIN_EMAILS, MASTER_ADMIN_EMAIL, isAdminUser, isMasterAdmin, AVAILABLE_TEAMS, COMPLEXITY_CONFIG, isDemoUser, DEMO_USER } from '../constants';
 import { DocumentsTab } from './DocumentsTab';
 import PortfolioTab from '../components/PortfolioTab';
+import { getDemoMockSurgeries } from '../services/mockDemoData';
 import { formatCurrency, formatDate, exportToExcel, parseExcelFile, getCategoryFromText, normalizeForGrouping, compressImage, estimateScrews, normalizeCategory } from '../utils';
 
 const Dashboard: React.FC<{ onLogout: () => void }> = ({ onLogout }) => {
@@ -29,15 +30,15 @@ const Dashboard: React.FC<{ onLogout: () => void }> = ({ onLogout }) => {
 
   const isAdmin = !isDemo && (isAdminUser(currentUser?.email) || currentUser?.role === 'admin' || currentUser?.role === 'owner');
   const isAssistant = currentUser?.role === 'assistant';
-  const isOwner = isMasterAdmin(currentUser?.email) || currentUser?.role === 'owner';
-  const isAdminEmail = isAdminUser(currentUser?.email);
+  const isOwner = !isDemo && (isMasterAdmin(currentUser?.email) || currentUser?.role === 'owner');
+  const isAdminEmail = !isDemo && isAdminUser(currentUser?.email);
   const canViewEnterprise = !isDemo && currentUser?.email?.toLowerCase() === 'medleaobh@gmail.com';
 
   const [viewScope, setViewScope] = useState<'personal' | 'global'>('personal');
   const [metricMode, setMetricMode] = useState<'revenue' | 'volume'>(isAssistant ? 'volume' : 'revenue');
 
   const [viewingEmail, setViewingEmail] = useState<string | null>(null);
-  const [allUsers, setAllUsers] = useState<User[]>(getUsers());
+  const [allUsers, setAllUsers] = useState<User[]>(isDemo ? [DEMO_USER] : getUsers());
   const [actionToast, setActionToast] = useState<{ message: string; type: 'success' | 'error' } | null>(null);
 
   const showToast = (message: string, type: 'success' | 'error' = 'success') => {
@@ -67,7 +68,7 @@ const Dashboard: React.FC<{ onLogout: () => void }> = ({ onLogout }) => {
     return allUsers.filter(u => u.status === 'PENDING').length;
   }, [allUsers]);
 
-  const [surgeries, setSurgeries] = useState<Surgery[]>(getSurgeries());
+  const [surgeries, setSurgeries] = useState<Surgery[]>(isDemo ? getDemoMockSurgeries() : getSurgeries());
 
   const [filterYear, setFilterYear] = useState<string>(new Date().getFullYear().toString());
   const [filterMonth, setFilterMonth] = useState<string>((new Date().getMonth() + 1).toString().padStart(2, '0'));
@@ -335,7 +336,10 @@ const Dashboard: React.FC<{ onLogout: () => void }> = ({ onLogout }) => {
   };
 
   const mySurgeries = useMemo(() => {
-    if (isDemo || isAssistant || (isOwner && viewScope === 'global')) {
+    if (isDemo) {
+      return surgeries && surgeries.length > 0 ? surgeries : getDemoMockSurgeries();
+    }
+    if (isAssistant || (isOwner && viewScope === 'global')) {
       return surgeries;
     }
     return surgeries.filter(s => {
