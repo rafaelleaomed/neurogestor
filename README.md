@@ -1,3 +1,9 @@
+<div align="center">
+
+**🌐 Language / Idioma:** [🇺🇸 English](README.md) • [🇧🇷 Português do Brasil](README.pt-BR.md)
+
+</div>
+
 # 🧠 Neurogestor
 
 > Clinical workflow and surgical portfolio management platform developed as a healthcare digital product case study.  
@@ -5,7 +11,7 @@
 
 <div align="center">
 
-[![Live Demo](https://img.shields.io/badge/Live%20Demo-neurogestor--app.web.app-blue?style=for-the-badge&logo=firebase)](https://neurogestor-app.web.app)
+[![Live Demo - Free Demo Access](https://img.shields.io/badge/Live%20Demo-Instant%20Access%20(No%20Signup)-emerald?style=for-the-badge&logo=firebase)](https://neurogestor-app.web.app/#/demo)
 
 [![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](https://opensource.org/licenses/MIT)
 ![React](https://img.shields.io/badge/React-19-blue?logo=react)
@@ -16,6 +22,8 @@
 ![Compliance](https://img.shields.io/badge/Compliance-LGPD%20%7C%20CFM%202.336%2F2023-emerald)
 
 </div>
+
+> 🚀 **Explore Without Registration**: Anyone visiting the project can immediately test and navigate the full application with sample clinical cases, financial analytics, retrospective month selector, multimodal dossier exports, and AI reporting by clicking **[Live Demo](https://neurogestor-app.web.app/#/demo)** or choosing "Acessar Modo Demonstração" on the login screen.
 
 ---
 

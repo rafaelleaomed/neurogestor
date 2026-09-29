@@ -7,7 +7,7 @@ import { messaging } from '../services/firebase';
 import { getToken } from 'firebase/messaging';
 
 import { Surgery, Category, User } from '../types';
-import { ADMIN_EMAIL, ADMIN_EMAILS, MASTER_ADMIN_EMAIL, isAdminUser, isMasterAdmin, AVAILABLE_TEAMS, COMPLEXITY_CONFIG } from '../constants';
+import { ADMIN_EMAIL, ADMIN_EMAILS, MASTER_ADMIN_EMAIL, isAdminUser, isMasterAdmin, AVAILABLE_TEAMS, COMPLEXITY_CONFIG, isDemoUser, DEMO_USER } from '../constants';
 import { DocumentsTab } from './DocumentsTab';
 import PortfolioTab from '../components/PortfolioTab';
 import { formatCurrency, formatDate, exportToExcel, parseExcelFile, getCategoryFromText, normalizeForGrouping, compressImage, estimateScrews, normalizeCategory } from '../utils';
@@ -21,16 +21,17 @@ const Dashboard: React.FC<{ onLogout: () => void }> = ({ onLogout }) => {
   const [showCameraMenu, setShowCameraMenu] = useState(false);
 
   const currentUser = getSession();
+  const isDemo = isDemoUser(currentUser);
 
   const [activeTab, setActiveTab] = useState<'overview' | 'surgeries' | 'portfolio' | 'users' | 'documents'>(
     (location.state as any)?.activeTab || 'overview'
   );
 
-  const isAdmin = isAdminUser(currentUser?.email) || currentUser?.role === 'admin' || currentUser?.role === 'owner';
+  const isAdmin = !isDemo && (isAdminUser(currentUser?.email) || currentUser?.role === 'admin' || currentUser?.role === 'owner');
   const isAssistant = currentUser?.role === 'assistant';
   const isOwner = isMasterAdmin(currentUser?.email) || currentUser?.role === 'owner';
   const isAdminEmail = isAdminUser(currentUser?.email);
-  const canViewEnterprise = currentUser?.email?.toLowerCase() === 'medleaobh@gmail.com';
+  const canViewEnterprise = !isDemo && currentUser?.email?.toLowerCase() === 'medleaobh@gmail.com';
 
   const [viewScope, setViewScope] = useState<'personal' | 'global'>('personal');
   const [metricMode, setMetricMode] = useState<'revenue' | 'volume'>(isAssistant ? 'volume' : 'revenue');
@@ -307,6 +308,11 @@ const Dashboard: React.FC<{ onLogout: () => void }> = ({ onLogout }) => {
 
   const handleDeleteSelected = async () => {
     if (selectedIds.size === 0) return;
+    if (isDemo) {
+      showToast('Modo Demonstração: Exclusão bloqueada para preservar os dados de exemplo.', 'error');
+      setSelectedIds(new Set());
+      return;
+    }
     if (window.confirm(`Deseja excluir os ${selectedIds.size} registros selecionados?`)) {
       setIsProcessing(true);
       setProcessingMsg('Excluindo registros selecionados...');
@@ -329,7 +335,7 @@ const Dashboard: React.FC<{ onLogout: () => void }> = ({ onLogout }) => {
   };
 
   const mySurgeries = useMemo(() => {
-    if (isAssistant || (isOwner && viewScope === 'global')) {
+    if (isDemo || isAssistant || (isOwner && viewScope === 'global')) {
       return surgeries;
     }
     return surgeries.filter(s => {
@@ -338,7 +344,7 @@ const Dashboard: React.FC<{ onLogout: () => void }> = ({ onLogout }) => {
       const belongsToTarget = s.owner_email === targetEmail || (!s.owner_email && targetEmail === currentUser?.email);
       return belongsToTarget;
     });
-  }, [surgeries, viewingEmail, currentUser, isAssistant, isOwner, viewScope]);
+  }, [surgeries, viewingEmail, currentUser, isAssistant, isOwner, viewScope, isDemo]);
 
   const filteredSurgeries = useMemo(() => {
     const filtered = mySurgeries.filter(s => {
@@ -633,6 +639,10 @@ const Dashboard: React.FC<{ onLogout: () => void }> = ({ onLogout }) => {
 
   const handleDeleteSurgery = async (e: React.MouseEvent, s: Surgery) => {
     e.stopPropagation();
+    if (isDemo) {
+      showToast('Modo Demonstração: Exclusão bloqueada para preservar os dados de exemplo.', 'error');
+      return;
+    }
     if (confirm(`Excluir permanentemente o registro de ${s.paciente}?`)) {
       try {
         await deleteSurgery(s.id);
@@ -1222,6 +1232,28 @@ const Dashboard: React.FC<{ onLogout: () => void }> = ({ onLogout }) => {
               className="px-3 py-1 bg-primary text-white text-[9px] font-black rounded-lg uppercase tracking-widest hover:bg-primary/90 transition-all"
             >
               Voltar ao Meu Perfil
+            </button>
+          </div>
+        )}
+
+        {/* Demo Mode Floating Top Banner */}
+        {isDemo && (
+          <div className="bg-gradient-to-r from-amber-500 via-orange-500 to-amber-600 text-white px-3 sm:px-6 py-2 shadow-md flex items-center justify-between text-xs sticky top-0 z-50 animate-in slide-in-from-top duration-300">
+            <div className="flex items-center gap-2 max-w-5xl mx-auto flex-1 justify-center sm:justify-start">
+              <span className="material-icons text-base animate-pulse">auto_awesome</span>
+              <p className="text-[11px] sm:text-xs font-bold leading-tight">
+                <span className="uppercase font-black tracking-wider bg-white/20 px-2 py-0.5 rounded-full mr-1.5">Modo Demonstração</span>
+                Você está explorando o Neurogestor com acesso completo como visitante. Os dados exibidos são demonstrativos para teste de todas as funcionalidades.
+              </p>
+            </div>
+            <button
+              onClick={onLogout}
+              className="ml-3 px-3 py-1 bg-white/20 hover:bg-white/30 text-white rounded-xl text-[10px] font-black uppercase tracking-wider transition-all whitespace-nowrap active:scale-95 cursor-pointer shadow-sm flex items-center gap-1"
+              title="Sair do modo demonstração e voltar à tela inicial"
+            >
+              <span className="material-icons text-xs">logout</span>
+              <span className="hidden sm:inline">Sair do Modo Demo</span>
+              <span className="sm:hidden">Sair</span>
             </button>
           </div>
         )}

@@ -85,6 +85,7 @@ export interface User {
   financial_config?: UserFinancialConfig;
   team_id?: string; // Ex: 'camarinha'
   team_name?: string; // Ex: 'Equipe Camarinha'
+  is_demo?: boolean; // Usuário visitante em modo demonstração
 }
 
 export interface OCRResult {

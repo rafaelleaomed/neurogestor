@@ -866,6 +866,11 @@ export const getSession = (): User | null => {
 
   const sessionUser = JSON.parse(data) as User;
 
+  // Usuário de demonstração não precisa existir na coleção de usuários do Firestore
+  if (sessionUser.is_demo || sessionUser.email === 'visitante@neurogestor.demo') {
+    return sessionUser;
+  }
+
   // Se ainda não carregamos do Firestore, confiamos no que está no localStorage/Sessão
   if (usersCache === null) {
     const localUsersData = localStorage.getItem(LOCAL_KEYS.USERS);

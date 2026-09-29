@@ -8,7 +8,7 @@ import OnboardingModal from './components/OnboardingModal';
 import { getSession, setSession, getUsers, saveUser, initStorage, getSurgeries, updateSurgeriesBatch, updateUserFcmToken } from './services/storage';
 import { User } from './types';
 import { requestFirebaseNotificationPermission } from './services/notifications';
-import { ADMIN_EMAIL, ADMIN_EMAILS, MASTER_ADMIN_EMAIL, isAdminUser, isMasterAdmin } from './constants';
+import { ADMIN_EMAIL, ADMIN_EMAILS, MASTER_ADMIN_EMAIL, isAdminUser, isMasterAdmin, DEMO_USER, isDemoUser } from './constants';
 import { importData2025 } from './services/import2025';
 import { getCategoryFromText, classifySurgeryProcedure } from './utils';
 
@@ -17,6 +17,14 @@ const App: React.FC = () => {
   const [loading, setLoading] = useState(false);
 
   useEffect(() => {
+    // Se o visitante acessou via #/demo ou ?demo=true, inicializa imediatamente a sessão de demonstração
+    const hash = window.location.hash || '';
+    const search = window.location.search || '';
+    if ((hash.includes('/demo') || search.includes('demo=true')) && !getSession()) {
+      setSession(DEMO_USER);
+      setUser(DEMO_USER);
+    }
+
     // Inicializa modo escuro
     if (localStorage.theme === 'dark' || (!('theme' in localStorage) && window.matchMedia('(prefers-color-scheme: dark)').matches)) {
       document.documentElement.classList.add('dark');
@@ -280,16 +288,26 @@ const App: React.FC = () => {
     }, 1000);
   };
 
+  const handleDemoLogin = () => {
+    setLoading(true);
+    setSession(DEMO_USER);
+    setUser(DEMO_USER);
+    setLoading(false);
+  };
+
   const handleLogout = () => {
     setSession(null);
     setUser(null);
+    if (window.location.hash.includes('/demo')) {
+      window.location.hash = '#/login';
+    }
   };
 
   const ProtectedRoute = ({ children, adminOnly = false }: { children?: React.ReactNode, adminOnly?: boolean }) => {
     if (!user) return <Navigate to="/login" replace />;
 
     if (adminOnly) {
-      const isAuthorized = user.role === 'admin' || user.role === 'owner' || isAdminUser(user.email);
+      const isAuthorized = !user.is_demo && (user.role === 'admin' || user.role === 'owner' || isAdminUser(user.email));
       if (!isAuthorized) {
         return <Navigate to="/dashboard" replace />;
       }
@@ -329,7 +347,7 @@ const App: React.FC = () => {
 
   return (
     <HashRouter>
-      {user && user.status === 'APPROVED' && !user.onboarding_completed && (
+      {user && user.status === 'APPROVED' && !user.onboarding_completed && !user.is_demo && (
         <OnboardingModal
           user={user}
           onSave={(updated) => {
@@ -340,7 +358,17 @@ const App: React.FC = () => {
         />
       )}
       <Routes>
-        <Route path="/login" element={user ? <Navigate to="/dashboard" /> : <Login onLogin={handleLogin} isLoading={loading} />} />
+        <Route path="/login" element={user ? <Navigate to="/dashboard" /> : <Login onLogin={handleLogin} onDemoLogin={handleDemoLogin} isLoading={loading} />} />
+        <Route
+          path="/demo"
+          element={(() => {
+            if (!user) {
+              setSession(DEMO_USER);
+              setUser(DEMO_USER);
+            }
+            return <Navigate to="/dashboard" replace />;
+          })()}
+        />
         <Route path="/dashboard" element={<ProtectedRoute><Dashboard onLogout={handleLogout} /></ProtectedRoute>} />
         <Route path="/admin" element={<ProtectedRoute adminOnly={true}><AdminPanel /></ProtectedRoute>} />
         <Route path="/add" element={<ProtectedRoute><ProcedureForm /></ProtectedRoute>} />

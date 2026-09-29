@@ -251,6 +251,13 @@ const ProcedureForm: React.FC = () => {
   const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
     if (loading) return;
+
+    if (currentUser?.is_demo) {
+      alert('✨ [Modo Demonstração] Simulação de cadastro realizada com sucesso!\n\nNo modo visitante, a gravação permanente no banco de dados de produção fica bloqueada para preservar os dados demonstrativos.');
+      navigate('/dashboard', { state: { activeTab: 'surgeries', filterYearSurgeries, filterMonthSurgeries } });
+      return;
+    }
+
     setLoading(true);
 
     try {

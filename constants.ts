@@ -1,9 +1,29 @@
 
-import { Category } from './types';
+import { Category, User } from './types';
 
 export const MASTER_ADMIN_EMAIL = 'medleaobh@gmail.com';
 export const ADMIN_EMAILS = ['medleaobh@gmail.com', 'rafaelleaobh@gmail.com'];
 export const ADMIN_EMAIL = 'medleaobh@gmail.com';
+
+export const DEMO_USER: User = {
+  email: 'visitante@neurogestor.demo',
+  name: 'Visitante (Modo Demonstração)',
+  status: 'APPROVED',
+  role: 'owner',
+  onboarding_completed: true,
+  financial_config: { pricing_model: 'legacy_camarinha' },
+  team_id: 'camarinha',
+  team_name: 'Equipe Camarinha',
+  is_demo: true,
+};
+
+export const isDemoUser = (userOrEmail?: User | string | null): boolean => {
+  if (!userOrEmail) return false;
+  if (typeof userOrEmail === 'string') {
+    return userOrEmail.toLowerCase().trim() === DEMO_USER.email.toLowerCase();
+  }
+  return !!userOrEmail.is_demo || userOrEmail.email.toLowerCase().trim() === DEMO_USER.email.toLowerCase();
+};
 
 export const isMasterAdmin = (email?: string | null): boolean => {
   if (!email) return false;

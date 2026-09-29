@@ -3,10 +3,11 @@ import { TermsAndPrivacyModal, CfmComplianceModal, SupportModal } from '../compo
 
 interface LoginProps {
   onLogin: (email: string, name?: string, rememberMe?: boolean) => void;
+  onDemoLogin?: () => void;
   isLoading: boolean;
 }
 
-const Login: React.FC<LoginProps> = ({ onLogin, isLoading }) => {
+const Login: React.FC<LoginProps> = ({ onLogin, onDemoLogin, isLoading }) => {
   const [email, setEmail] = useState('');
   const [name, setName] = useState('');
   const [rememberMe, setRememberMe] = useState(true);
@@ -94,6 +95,41 @@ const Login: React.FC<LoginProps> = ({ onLogin, isLoading }) => {
                   </span>
                 </button>
 
+                <div className="relative flex py-1 items-center">
+                  <div className="flex-grow border-t border-slate-200 dark:border-slate-800"></div>
+                  <span className="flex-shrink mx-3 text-[10px] font-bold text-slate-400 uppercase tracking-widest">ou experimente agora</span>
+                  <div className="flex-grow border-t border-slate-200 dark:border-slate-800"></div>
+                </div>
+
+                <button 
+                  type="button"
+                  onClick={onDemoLogin}
+                  disabled={isLoading}
+                  className="w-full group relative overflow-hidden bg-gradient-to-r from-blue-600/10 via-indigo-600/10 to-amber-500/10 hover:from-blue-600/20 hover:to-amber-500/20 text-slate-900 dark:text-white border-2 border-primary/30 hover:border-primary rounded-2xl py-3.5 px-4 flex items-center justify-between shadow-lg transition-all duration-300 active:scale-[0.98] disabled:opacity-50 cursor-pointer"
+                >
+                  <div className="flex items-center space-x-3 text-left">
+                    <div className="w-11 h-11 rounded-2xl bg-gradient-to-br from-primary to-indigo-600 text-white flex items-center justify-center shadow-md shadow-primary/30 group-hover:scale-105 transition-transform flex-shrink-0">
+                      <span className="material-icons text-2xl">auto_awesome</span>
+                    </div>
+                    <div>
+                      <div className="flex items-center gap-2">
+                        <span className="font-extrabold text-sm sm:text-base text-slate-900 dark:text-white">
+                          Acessar Modo Demonstração
+                        </span>
+                        <span className="text-[9px] font-black uppercase px-2 py-0.5 rounded-full bg-emerald-500 text-white tracking-wider">
+                          Sem Cadastro
+                        </span>
+                      </div>
+                      <p className="text-[11px] text-slate-500 dark:text-slate-400 font-medium">
+                        Explore gráficos, leitor de etiquetas e portfólio cirúrgico
+                      </p>
+                    </div>
+                  </div>
+                  <span className="material-icons text-primary group-hover:translate-x-1 transition-transform">
+                    arrow_forward
+                  </span>
+                </button>
+
                 <div className="text-center pt-1">
                   <button 
                     onClick={() => { setShowEmailInput(true); setIsRegistering(true); }}
@@ -159,6 +195,17 @@ const Login: React.FC<LoginProps> = ({ onLogin, isLoading }) => {
                   >
                     Voltar
                   </button>
+
+                  <div className="pt-2 border-t border-slate-100 dark:border-slate-800 text-center">
+                    <button
+                      type="button"
+                      onClick={onDemoLogin}
+                      className="text-xs font-bold text-amber-600 dark:text-amber-400 hover:underline flex items-center justify-center gap-1 mx-auto cursor-pointer"
+                    >
+                      <span className="material-icons text-sm">visibility</span>
+                      Apenas conhecendo o app? Acessar demonstração
+                    </button>
+                  </div>
                 </div>
               </form>
             )}
