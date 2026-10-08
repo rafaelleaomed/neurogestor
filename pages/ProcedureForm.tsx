@@ -176,9 +176,9 @@ const ProcedureForm: React.FC = () => {
           }));
 
           const msg = (err?.message || '').toLowerCase();
-          if (msg.includes('429') || msg.includes('quota') || msg.includes('limite')) {
-            alert("A IA está ocupada neste instante. A imagem foi anexada como etiqueta.");
-          } else if (msg.includes('25s') || msg.includes('tempo limite')) {
+          if (msg.includes('429') || msg.includes('quota') || msg.includes('limite') || msg.includes('ocupad')) {
+            alert("A IA atingiu uma sobrecarga temporária nos servidores do Google. A imagem foi anexada como etiqueta com segurança para você conferir ou reprocessar.");
+          } else if (msg.includes('25s') || msg.includes('45s') || msg.includes('tempo limite')) {
             alert("A leitura da IA demorou além do esperado. A imagem foi anexada para conferência.");
           } else {
             alert("Não foi possível ler todos os dados da etiqueta automaticamente, mas a imagem foi anexada com sucesso. Você pode preencher os campos restantes.");
@@ -196,6 +196,33 @@ const ProcedureForm: React.FC = () => {
       if (inputElement) inputElement.value = '';
       if (fileInputRef.current) fileInputRef.current.value = '';
       if (fileInputGalleryRef.current) fileInputGalleryRef.current.value = '';
+    }
+  };
+
+  const handleRetryLabelOCR = async (b64: string) => {
+    if (ocrLoading) return;
+    setOcrLoading(true);
+    try {
+      const result = await performOCR(b64);
+      const auto = result?.procedimento ? classifySurgeryProcedure(result.procedimento) : null;
+      setFormData(p => ({
+        ...p,
+        paciente: result?.paciente ? result.paciente : p.paciente,
+        procedimento: result?.procedimento ? result.procedimento : p.procedimento,
+        medico: result?.medico ? result.medico.toUpperCase() : p.medico,
+        hospital: result?.hospital ? result.hospital.toUpperCase() : p.hospital,
+        convenio: result?.convenio ? result.convenio : p.convenio,
+        data: result?.data ? result.data : p.data,
+        categoria: auto ? auto.categoria : (result?.procedimento ? getCategoryFromText(result.procedimento) : p.categoria),
+        subtipo: auto?.subtipo ? auto.subtipo : p.subtipo,
+        niveis_operados: auto?.niveis_operados ? auto.niveis_operados : p.niveis_operados,
+      }));
+      alert("✅ Leitura inteligente reprocessada com sucesso!");
+    } catch (err: any) {
+      console.error("[NeuroGestor] Erro no retry do OCR:", err);
+      alert("Não foi possível reprocessar a etiqueta neste momento. A imagem permanece salva como etiqueta.");
+    } finally {
+      setOcrLoading(false);
     }
   };
 
@@ -514,12 +541,40 @@ const ProcedureForm: React.FC = () => {
         {/* Preview of Labels */}
         {formData.label_images.length > 0 && (
           <div className="px-8 mt-6">
-            <h3 className="text-xs font-bold text-slate-400 uppercase tracking-widest mb-2">Etiquetas Scaneadas</h3>
+            <div className="flex items-center justify-between mb-2">
+              <h3 className="text-xs font-bold text-slate-400 uppercase tracking-widest">Etiquetas Anexadas</h3>
+              <span className="text-[11px] text-primary dark:text-primary/90 font-medium">Toque na varinha mágica para re-ler</span>
+            </div>
             <div className="flex items-center gap-3 overflow-x-auto pb-2 scrollbar-hide">
               {formData.label_images.map((img, i) => (
-                <div key={i} className="relative flex-shrink-0 w-20 h-20 rounded-xl overflow-hidden border-2 border-slate-100 dark:border-slate-800 shadow-sm">
+                <div key={i} className="relative flex-shrink-0 w-24 h-24 rounded-xl overflow-hidden border-2 border-slate-100 dark:border-slate-800 shadow-sm group">
                   <img src={img} className="w-full h-full object-cover" alt="Label" />
-                  <button onClick={() => setFormData(p => ({ ...p, label_images: p.label_images.filter((_, idx) => idx !== i) }))} className="absolute top-1 right-1 bg-red-500 text-white w-5 h-5 rounded-full flex items-center justify-center text-[10px]"><span className="material-icons text-[12px]">close</span></button>
+                  <div className="absolute inset-0 bg-slate-900/60 opacity-0 group-hover:opacity-100 transition-opacity flex items-center justify-center gap-1.5 p-1">
+                    <button 
+                      type="button"
+                      title="Re-executar leitura com IA"
+                      disabled={ocrLoading}
+                      onClick={() => handleRetryLabelOCR(img)}
+                      className="bg-primary hover:bg-primary/90 text-white w-7 h-7 rounded-full flex items-center justify-center text-[12px] shadow-sm transition"
+                    >
+                      <span className="material-icons text-[14px]">auto_awesome</span>
+                    </button>
+                    <button 
+                      type="button"
+                      title="Remover etiqueta"
+                      onClick={() => setFormData(p => ({ ...p, label_images: p.label_images.filter((_, idx) => idx !== i) }))} 
+                      className="bg-red-500 hover:bg-red-600 text-white w-7 h-7 rounded-full flex items-center justify-center text-[12px] shadow-sm transition"
+                    >
+                      <span className="material-icons text-[14px]">close</span>
+                    </button>
+                  </div>
+                  <button 
+                    type="button"
+                    onClick={() => setFormData(p => ({ ...p, label_images: p.label_images.filter((_, idx) => idx !== i) }))} 
+                    className="md:hidden absolute top-1 right-1 bg-red-500 text-white w-5 h-5 rounded-full flex items-center justify-center text-[10px]"
+                  >
+                    <span className="material-icons text-[12px]">close</span>
+                  </button>
                 </div>
               ))}
             </div>

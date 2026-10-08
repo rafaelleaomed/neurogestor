@@ -4,11 +4,32 @@ import { calculatePrice, getCategoryFromText, normalizeDateToISO } from "../util
 import { getSurgeries, getDoctors, getHospitals } from "./storage";
 import { SEED_PROCEDURES, HOSPITAL_ALIASES, SEED_DOCTORS, SEED_HOSPITALS } from "../constants";
 
-const PRIMARY_MODEL = "gemini-2.5-flash";
-const FALLBACK_MODEL = "gemini-2.0-flash";
+/**
+ * CASCATA DE MODELOS INTELIGENTES DO GEMINI (Padronização Oficial Google GenAI):
+ * 1. gemini-3.5-flash: Modelo de ponta para visão médica, OCR estruturado e rapidez (1-2s).
+ * 2. gemini-3.5-flash-lite: Modelo de altíssima vazão e velocidade ultrarrápida (<500ms) para fallback instantâneo.
+ * 3. gemini-flash-latest: Alias dinâmico do Google sempre apontando para a versão estável mais recente.
+ * 4. gemini-3.8-flash: Modelo de maior raciocínio clínico para casos mais complexos.
+ * 5. gemini-2.5-flash: Fallback de contingência para compatibilidade legado.
+ */
+export const MODEL_CASCADE = [
+  "gemini-3.5-flash",
+  "gemini-3.5-flash-lite",
+  "gemini-flash-latest",
+  "gemini-3.8-flash",
+  "gemini-2.5-flash",
+] as const;
+
+let aiClientInstance: GoogleGenAI | null = null;
+export const getAIClient = (): GoogleGenAI => {
+  if (!aiClientInstance) {
+    aiClientInstance = new GoogleGenAI({ apiKey: process.env.API_KEY });
+  }
+  return aiClientInstance;
+};
 
 /**
- * CONTROLADOR DE FILA GLOBAL SEGURO (MUTEX COM TIMEOUT E PREVENÇÃO DE DEADLOCK)
+ * CONTROLADOR DE FILA GLOBAL SEGURO (MUTEX COM BACKOFF EXPONENCIAL, JITTER E TIMEOUT)
  */
 class GeminiQueue {
   private queue: Promise<any> = Promise.resolve();
@@ -29,68 +50,92 @@ class GeminiQueue {
     });
   }
 
-  private async executeWithRetry<T>(task: () => Promise<T>, retries = 2): Promise<T> {
+  private async executeWithRetry<T>(task: () => Promise<T>, retries = 3): Promise<T> {
     let lastError: any;
     for (let i = 0; i <= retries; i++) {
+      let timer: any;
       try {
-        // Timeout rígido de 25 segundos para cada tentativa
-        return await Promise.race([
-          task(),
-          new Promise<never>((_, rej) =>
-            setTimeout(() => rej(new Error("Tempo limite de comunicação com a IA excedido (45s).")), 45000)
-          )
-        ]);
+        const timeoutPromise = new Promise<never>((_, rej) => {
+          timer = setTimeout(() => rej(new Error("Tempo limite de comunicação com a IA excedido (45s).")), 45000);
+        });
+
+        const result = await Promise.race([task(), timeoutPromise]);
+        clearTimeout(timer);
+        return result;
       } catch (error: any) {
+        clearTimeout(timer);
         lastError = error;
         const errorMsg = (error?.message || JSON.stringify(error) || '').toUpperCase();
         const isQuotaOrSpike =
           errorMsg.includes("429") ||
           errorMsg.includes("RESOURCE_EXHAUSTED") ||
           errorMsg.includes("503") ||
-          errorMsg.includes("UNAVAILABLE");
+          errorMsg.includes("500") ||
+          errorMsg.includes("UNAVAILABLE") ||
+          errorMsg.includes("OVERLOADED") ||
+          errorMsg.includes("QUOTA") ||
+          errorMsg.includes("TEMPO LIMITE");
 
         if (isQuotaOrSpike && i < retries) {
-          const wait = (i + 1) * 1500;
+          // Backoff exponencial inteligente com jitter (ex: ~1s, ~2.2s, ~4.5s)
+          const wait = Math.min(1000 * Math.pow(2, i) + Math.random() * 600, 7000);
+          console.warn(`[NeuroGestor] Instabilidade na tentativa ${i + 1}/${retries + 1}. Aguardando ${Math.round(wait)}ms antes de tentar novamente...`);
           await new Promise(r => setTimeout(r, wait));
           continue;
         }
         throw error;
       }
     }
-    throw lastError || new Error("Erro de conexão com IA.");
+    throw lastError || new Error("Erro de conexão persistente com a IA.");
   }
 }
 
 const aiQueue = new GeminiQueue();
 
 /**
- * Executa generateContent com fallback de modelo caso o primário esteja indisponível.
+ * Executa generateContent através da cascata de modelos inteligentes.
+ * Se o modelo primário estiver sobrecarregado ou temporariamente indisponível no Google,
+ * o NeuroGestor migra automaticamente para o próximo tier sem interromper o usuário.
  */
 async function callGeminiWithFallback(ai: GoogleGenAI, requestPayload: any): Promise<any> {
-  try {
-    return await ai.models.generateContent({
-      ...requestPayload,
-      model: PRIMARY_MODEL
-    });
-  } catch (err: any) {
-    const errStr = (err?.message || JSON.stringify(err) || '').toUpperCase();
-    const isModelIssue =
-      errStr.includes("404") ||
-      errStr.includes("503") ||
-      errStr.includes("429") ||
-      errStr.includes("RESOURCE_EXHAUSTED") ||
-      errStr.includes("NOT_FOUND") ||
-      errStr.includes("UNAVAILABLE");
+  let lastError: any = null;
 
-    if (isModelIssue) {
-      console.warn(`[NeuroGestor] Fallback acionado: ${PRIMARY_MODEL} -> ${FALLBACK_MODEL}`, err?.message);
+  for (let i = 0; i < MODEL_CASCADE.length; i++) {
+    const currentModel = MODEL_CASCADE[i];
+    try {
       return await ai.models.generateContent({
         ...requestPayload,
-        model: FALLBACK_MODEL
+        model: currentModel
       });
+    } catch (err: any) {
+      lastError = err;
+      const errStr = (err?.message || JSON.stringify(err) || '').toUpperCase();
+      const isModelOrCapacityIssue =
+        errStr.includes("404") ||
+        errStr.includes("503") ||
+        errStr.includes("500") ||
+        errStr.includes("429") ||
+        errStr.includes("RESOURCE_EXHAUSTED") ||
+        errStr.includes("NOT_FOUND") ||
+        errStr.includes("UNAVAILABLE") ||
+        errStr.includes("OVERLOADED") ||
+        errStr.includes("QUOTA") ||
+        errStr.includes("CAPACITY") ||
+        errStr.includes("DEADLINE_EXCEEDED") ||
+        errStr.includes("LIMIT");
+
+      if (isModelOrCapacityIssue && i < MODEL_CASCADE.length - 1) {
+        const nextModel = MODEL_CASCADE[i + 1];
+        console.warn(`[NeuroGestor] Cascata acionada: Modelo ${currentModel} indisponível/ocupado (${err?.message}). Alternando automaticamente para ${nextModel}...`);
+        // Pausa breve com jitter para dar respiro à requisição
+        await new Promise(r => setTimeout(r, 200 + Math.random() * 200));
+        continue;
+      }
+      throw err;
     }
-    throw err;
   }
+
+  throw lastError || new Error("Todos os modelos de IA da cascata estão temporariamente indisponíveis.");
 }
 
 // ============================================================
@@ -214,7 +259,7 @@ const levenshteinSimilarity = (a: string, b: string): number => {
 
 export const performOCR = async (base64Image: string): Promise<OCRResult> => {
   return aiQueue.add(async () => {
-    const ai = new GoogleGenAI({ apiKey: process.env.API_KEY });
+    const ai = getAIClient();
     const context = buildOCRContext();
 
     const response = await callGeminiWithFallback(ai, {
@@ -267,7 +312,7 @@ Retorne estritamente o JSON com as chaves indicadas. Se algum campo não estiver
 
 export const performReportOCR = async (base64Image: string): Promise<string> => {
   return aiQueue.add(async () => {
-    const ai = new GoogleGenAI({ apiKey: process.env.API_KEY });
+    const ai = getAIClient();
     const response = await callGeminiWithFallback(ai, {
       contents: {
         parts: [
@@ -295,7 +340,7 @@ export const extractSurgeriesFromCalendarEvents = async (events: any[]): Promise
   if (events.length === 0) return [];
 
   return aiQueue.add(async () => {
-    const ai = new GoogleGenAI({ apiKey: process.env.API_KEY });
+    const ai = getAIClient();
     const context = buildOCRContext();
     const prompt = `Analise estes eventos da agenda médica e extraia cirurgias reais (ignore consultórios/feriados). Converta a data para YYYY-MM-DD.
 ${context}
@@ -436,7 +481,7 @@ export const performBatchLabelsOCR = async (
 
 export const mapSpreadsheetWithAI = async (rawData: any[]): Promise<Surgery[]> => {
   return aiQueue.add(async () => {
-    const ai = new GoogleGenAI({ apiKey: process.env.API_KEY });
+    const ai = getAIClient();
     const context = buildOCRContext();
     const sample = rawData.slice(0, 100);
     const prompt = `
@@ -498,7 +543,7 @@ export const mapSpreadsheetWithAI = async (rawData: any[]): Promise<Surgery[]> =
 
 export const generateMnioReport = async (surgery: Partial<Surgery>, existingNotes: string): Promise<string> => {
   return aiQueue.add(async () => {
-    const ai = new GoogleGenAI({ apiKey: process.env.API_KEY });
+    const ai = getAIClient();
     
     let alarmeStr = "Não houve alterações significativas ou alarmes intraoperatórios.";
     if (surgery.houve_alarme) {
@@ -534,7 +579,7 @@ Não inclua cabeçalho, saudação ou rodapé. Entregue apenas o texto do laudo.
 export const generateCaseClinicalSummary = async (surgery: Partial<Surgery>): Promise<string> => {
   try {
     return await aiQueue.add(async () => {
-      const ai = new GoogleGenAI({ apiKey: process.env.API_KEY });
+      const ai = getAIClient();
 
       let alarmeContext = "Procedimento transcorreu sem alterações ou alarmes neurofisiológicos críticos.";
       if (surgery.houve_alarme) {
@@ -592,7 +637,7 @@ DIRETRIZES:
 export const generateReportTemplateFromProcedure = async (procedureName: string): Promise<string> => {
   try {
     return await aiQueue.add(async () => {
-      const ai = new GoogleGenAI({ apiKey: process.env.API_KEY });
+      const ai = getAIClient();
       const prompt = `Você é um médico especialista em neurofisiologia clínica e monitorização neurofisiológica intraoperatória (MNIO).
 Crie um MODELO DE LAUDO / RELATÓRIO OPERATÓRIO PADRÃO estruturado para a cirurgia: "${procedureName}".
 
