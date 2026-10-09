@@ -343,9 +343,11 @@ const Dashboard: React.FC<{ onLogout: () => void }> = ({ onLogout }) => {
       return surgeries;
     }
     return surgeries.filter(s => {
-      // Filtragem por proprietário (Tenny)
-      const targetEmail = viewingEmail || currentUser?.email;
-      const belongsToTarget = s.owner_email === targetEmail || (!s.owner_email && targetEmail === currentUser?.email);
+      // Filtragem estrita por proprietário (Isolamento Multi-Tenant)
+      const targetEmail = (viewingEmail || currentUser?.email || '').toLowerCase().trim();
+      const surgeryOwner = (s.owner_email || '').toLowerCase().trim();
+      const isTargetMaster = isMasterAdmin(targetEmail) || targetEmail === 'rafaelleaobh@gmail.com';
+      const belongsToTarget = surgeryOwner === targetEmail || (isTargetMaster && (surgeryOwner === 'legacy' || !surgeryOwner));
       return belongsToTarget;
     });
   }, [surgeries, viewingEmail, currentUser, isAssistant, isOwner, viewScope, isDemo]);

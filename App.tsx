@@ -5,13 +5,11 @@ import Dashboard from './pages/Dashboard';
 import ProcedureForm from './pages/ProcedureForm';
 import AdminPanel from './pages/AdminPanel';
 import OnboardingModal from './components/OnboardingModal';
-import { getSession, setSession, getUsers, saveUser, initStorage, getSurgeries, updateSurgeriesBatch, updateUserFcmToken } from './services/storage';
+import { getSession, setSession, getUsers, saveUser, initStorage, getSurgeries, updateSurgeriesBatch, updateUserFcmToken, cleanupStorageSession } from './services/storage';
 import { User } from './types';
 import { requestFirebaseNotificationPermission } from './services/notifications';
 import { ADMIN_EMAIL, ADMIN_EMAILS, MASTER_ADMIN_EMAIL, isAdminUser, isMasterAdmin, DEMO_USER, isDemoUser } from './constants';
-import { importData2025 } from './services/import2025';
 import { getCategoryFromText, classifySurgeryProcedure } from './utils';
-
 const App: React.FC = () => {
   const [user, setUser] = useState<User | null>(getSession());
   const [loading, setLoading] = useState(false);
@@ -150,16 +148,6 @@ const App: React.FC = () => {
       }
     }
 
-    // Importar dados de 2025 (apenas uma vez)
-    const already2025 = localStorage.getItem('neuro_2025_imported');
-    if (!already2025) {
-      importData2025().then(count => {
-        console.log(`[NeuroGestor] ✅ ${count} cirurgias de 2025 importadas com sucesso!`);
-        localStorage.setItem('neuro_2025_imported', 'true');
-      }).catch(err => {
-        console.error('[NeuroGestor] Erro ao importar dados 2025:', err);
-      });
-    }
 
     // Reprocessar cirurgias existentes sem subtipo ou com categoria desatualizada (uma vez por sessão)
     setTimeout(() => {
@@ -310,6 +298,7 @@ const App: React.FC = () => {
   };
 
   const handleLogout = () => {
+    cleanupStorageSession();
     setSession(null);
     setUser(null);
     if (window.location.hash.includes('/demo')) {

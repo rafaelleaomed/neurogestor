@@ -2,12 +2,12 @@
 import { db } from './firebase';
 import {
   collection, doc, getDocs, setDoc, deleteDoc,
-  writeBatch, query, onSnapshot, Unsubscribe
+  writeBatch, query, where, onSnapshot, Unsubscribe
 } from 'firebase/firestore';
 import { firebaseStorage } from './firebase';
 import { ref, uploadBytes, getDownloadURL } from 'firebase/storage';
 import { Surgery, Category, User, PasswordEntry, ReportTemplate, ElectrodeModel, LearnedCategory } from '../types';
-import { SEED_DOCTORS, SEED_HOSPITALS, isDemoUser, DEMO_USER } from '../constants';
+import { SEED_DOCTORS, SEED_HOSPITALS, isDemoUser, DEMO_USER, isMasterAdmin, isAdminUser } from '../constants';
 import { getDemoMockSurgeries, saveDemoMockSurgery, DEMO_FICTITIOUS_PASSWORDS } from './mockDemoData';
 
 // ============================================================
@@ -85,6 +85,49 @@ let reportTemplatesUnsub: Unsubscribe | null = null;
 let electrodeModelsUnsub: Unsubscribe | null = null;
 let learnedCategoriesUnsub: Unsubscribe | null = null;
 let learnedCategoriesCache: Record<string, Category> | null = null;
+let currentListenerEmail: string | null = null;
+
+/**
+ * Encerra todas as conexões em tempo real e limpa os dados em memória/disco
+ * ao deslogar ou trocar de usuário, garantindo isolamento total (LGPD/HIPAA).
+ */
+export const cleanupStorageSession = () => {
+  if (surgeriesUnsub) {
+    try { surgeriesUnsub(); } catch (e) {}
+    surgeriesUnsub = null;
+  }
+  if (usersUnsub) {
+    try { usersUnsub(); } catch (e) {}
+    usersUnsub = null;
+  }
+  if (passwordsUnsub) {
+    try { passwordsUnsub(); } catch (e) {}
+    passwordsUnsub = null;
+  }
+  if (reportTemplatesUnsub) {
+    try { reportTemplatesUnsub(); } catch (e) {}
+    reportTemplatesUnsub = null;
+  }
+  if (electrodeModelsUnsub) {
+    try { electrodeModelsUnsub(); } catch (e) {}
+    electrodeModelsUnsub = null;
+  }
+  if (learnedCategoriesUnsub) {
+    try { learnedCategoriesUnsub(); } catch (e) {}
+    learnedCategoriesUnsub = null;
+  }
+  surgeriesCache = null;
+  usersCache = null;
+  passwordsCache = null;
+  reportTemplatesCache = null;
+  electrodeModelsCache = null;
+  learnedCategoriesCache = null;
+  currentListenerEmail = null;
+
+  try {
+    localStorage.removeItem(LOCAL_KEYS.SURGERIES);
+  } catch (e) {}
+};
 
 // ============================================================
 // SISTEMA DE LISTENERS (OBSERVERS)
@@ -124,8 +167,8 @@ export const subscribeToElectrodes = (cb: DataCallback<ElectrodeModel>) => {
 // ============================================================
 
 /**
- * Deve ser chamado uma vez ao carregar o app.
- * - Configura listeners em tempo real do Firestore.
+ * Deve ser chamado uma vez ao carregar o app ou ao trocar de sessão.
+ * - Configura listeners em tempo real do Firestore com isolamento por usuário.
  * - Migra dados antigos do localStorage se existirem.
  */
 export const initStorage = async () => {
@@ -134,11 +177,35 @@ export const initStorage = async () => {
     console.log('[NeuroGestor] Modo Demonstração: Listeners do Firestore desativados para isolamento total de dados reais.');
     return;
   }
+
+  const sessionEmail = currentSession?.email?.toLowerCase().trim() || null;
+
+  // Se o usuário mudou (ex: logout de Rafael e login de Michel), reinicia listeners
+  if (currentListenerEmail !== null && currentListenerEmail !== sessionEmail) {
+    cleanupStorageSession();
+  }
+
   if (surgeriesUnsub) return;
+  currentListenerEmail = sessionEmail;
+
+  const isOwnerOrAdmin = currentSession && (
+    isMasterAdmin(currentSession.email) ||
+    isAdminUser(currentSession.email) ||
+    currentSession.role === 'owner' ||
+    currentSession.role === 'admin' ||
+    currentSession.role === 'assistant'
+  );
+
+  // Consulta do Firestore com isolamento estrito:
+  // Se for Master Admin / Admin / Assistente: escuta coleção inteira para gestão da equipe
+  // Se for médico / usuário comum: escuta ESTRITAMENTE as cirurgias onde owner_email == seu email
+  const surgeriesQuery = (isOwnerOrAdmin || !sessionEmail)
+    ? collection(db, COLLECTIONS.SURGERIES)
+    : query(collection(db, COLLECTIONS.SURGERIES), where('owner_email', '==', sessionEmail));
 
   // Listener de cirurgias em tempo real
   surgeriesUnsub = onSnapshot(
-    collection(db, COLLECTIONS.SURGERIES),
+    surgeriesQuery,
     (snapshot) => {
       surgeriesCache = snapshot.docs.map(d => ({ id: d.id, ...d.data() } as Surgery));
       // Atualiza localStorage como cache offline (silencioso se falhar por falta de espaço)
