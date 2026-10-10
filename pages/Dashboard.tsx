@@ -346,9 +346,7 @@ const Dashboard: React.FC<{ onLogout: () => void }> = ({ onLogout }) => {
       // Filtragem estrita por proprietário (Isolamento Multi-Tenant)
       const targetEmail = (viewingEmail || currentUser?.email || '').toLowerCase().trim();
       const surgeryOwner = (s.owner_email || '').toLowerCase().trim();
-      const isTargetMaster = isMasterAdmin(targetEmail) || targetEmail === 'rafaelleaobh@gmail.com';
-      const belongsToTarget = surgeryOwner === targetEmail || (isTargetMaster && (surgeryOwner === 'legacy' || !surgeryOwner));
-      return belongsToTarget;
+      return surgeryOwner === targetEmail;
     });
   }, [surgeries, viewingEmail, currentUser, isAssistant, isOwner, viewScope, isDemo]);
 
@@ -765,7 +763,7 @@ const Dashboard: React.FC<{ onLogout: () => void }> = ({ onLogout }) => {
         // Vincula owner_email do usuário logado desde o início
         const mappedResults: Surgery[] = results.map(s => ({
           ...s,
-          owner_email: currentUser?.email || 'legacy'
+          owner_email: currentUser?.email || 'rafaelleaobh@gmail.com'
         }));
 
         const checked = checkDuplicates(mappedResults);
@@ -824,7 +822,7 @@ const Dashboard: React.FC<{ onLogout: () => void }> = ({ onLogout }) => {
         return {
           ...item,
           id: item.id || crypto.randomUUID(),
-          owner_email: currentUser?.email || item.owner_email || 'legacy',
+          owner_email: currentUser?.email || item.owner_email || 'rafaelleaobh@gmail.com',
           paciente: item.paciente?.trim() || 'Paciente Não Identificado',
           procedimento: proc,
           categoria: item.categoria || getCategoryFromText(proc),

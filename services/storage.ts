@@ -405,7 +405,7 @@ export const saveSurgery = async (surgery: Surgery) => {
   }
   const surgeryWithOwner = cleanUndefined({
     ...surgery,
-    owner_email: surgery.owner_email || user?.email || 'legacy'
+    owner_email: surgery.owner_email || user?.email || 'rafaelleaobh@gmail.com'
   });
 
   // Atualiza Firestore (fonte primária)
@@ -451,7 +451,7 @@ export const saveSurgeriesBatch = async (newSurgeries: Surgery[]): Promise<numbe
     const itemWithId: Surgery = {
       ...newItem,
       id: newItem.id || crypto.randomUUID(),
-      owner_email: newItem.owner_email || user?.email || 'legacy'
+      owner_email: newItem.owner_email || user?.email || 'rafaelleaobh@gmail.com'
     };
 
     const isDuplicate = userExisting.some(old => {
@@ -490,7 +490,7 @@ export const saveSurgeriesBatch = async (newSurgeries: Surgery[]): Promise<numbe
       chunk.forEach(s => {
         const surgeryWithOwner = cleanUndefined({
           ...s,
-          owner_email: s.owner_email || user?.email || 'legacy'
+          owner_email: s.owner_email || user?.email || 'rafaelleaobh@gmail.com'
         });
         batch.set(doc(db, COLLECTIONS.SURGERIES, s.id), surgeryWithOwner);
       });
@@ -531,7 +531,7 @@ export const updateSurgeriesBatch = async (updatedSurgeries: Surgery[]) => {
       chunk.forEach(s => {
         const surgeryWithOwner = cleanUndefined({
           ...s,
-          owner_email: s.owner_email || user?.email || 'legacy'
+          owner_email: s.owner_email || user?.email || 'rafaelleaobh@gmail.com'
         });
         batch.set(doc(db, COLLECTIONS.SURGERIES, s.id), surgeryWithOwner, { merge: true });
       });
