@@ -1,29 +1,31 @@
 rules_version = '2';
 service firebase.storage {
   match /b/{bucket}/o {
-    
-    // ============================================================
-    // SEGURANÇA E PRIVACIDADE DE DOCUMENTOS E IMAGENS CLÍNICAS
-    // Exames, fotos intraoperatórias e laudos - LGPD & CFM 2.336/2023
-    // ============================================================
-
     function isAuthenticated() {
-      return request.auth != null;
+      return request.auth != null && request.auth.token.email_verified == true;
     }
 
-    // Imagens de cirurgias e documentos médicos
-    match /surgeries/{surgeryId}/{allPaths=**} {
-      // Bloqueia acesso não autenticado
-      allow read: if isAuthenticated();
-      // Permite upload apenas para usuários autenticados com arquivos de imagem válidos (< 15MB)
-      allow write: if isAuthenticated() 
+    function isAdmin() {
+      return isAuthenticated() && (
+        request.auth.token.role == 'admin' ||
+        request.auth.token.role == 'owner' ||
+        request.auth.token.email == 'rafaelleaobh@gmail.com' ||
+        request.auth.token.email == 'medleaobh@gmail.com'
+      );
+    }
+
+    match /surgeries/{uid}/{surgeryId}/{allPaths=**} {
+      allow read: if isAdmin() || (isAuthenticated() && request.auth.uid == uid);
+      allow write: if isAdmin() || (
+        isAuthenticated()
+        && request.auth.uid == uid
         && request.resource.size < 15 * 1024 * 1024
-        && request.resource.contentType.matches('image/.*');
+        && request.resource.contentType.matches('image/.*')
+      );
     }
 
-    // Demais diretórios e arquivos
     match /{allPaths=**} {
-      allow read, write: if isAuthenticated();
+      allow read, write: if false;
     }
   }
 }

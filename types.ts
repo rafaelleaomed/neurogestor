@@ -71,6 +71,7 @@ export interface UserFinancialConfig {
 
 export interface User {
   email: string;
+  auth_uid?: string;
   name: string;
   picture?: string;
   status: 'PENDING' | 'APPROVED' | 'DENIED';

@@ -2,9 +2,10 @@
 import { db } from './firebase';
 import {
   collection, doc, getDocs, setDoc, deleteDoc,
-  writeBatch, query, where, onSnapshot, Unsubscribe
+  getDoc, writeBatch, query, where, onSnapshot, Unsubscribe
 } from 'firebase/firestore';
 import { firebaseStorage } from './firebase';
+import { auth } from './auth';
 import { ref, uploadBytes, getDownloadURL } from 'firebase/storage';
 import { Surgery, Category, User, PasswordEntry, ReportTemplate, ElectrodeModel, LearnedCategory } from '../types';
 import { SEED_DOCTORS, SEED_HOSPITALS, isDemoUser, DEMO_USER, isMasterAdmin, isAdminUser } from '../constants';
@@ -30,7 +31,13 @@ export const uploadImage = async (base64: string, folder: string, filename: stri
     const response = await fetch(base64);
     const blob = await response.blob();
 
-    const storageRef = ref(firebaseStorage, `${folder}/${filename}`);
+    const uid = auth.currentUser?.uid;
+    if (!uid) throw new Error('Sessão de autenticação ausente para upload.');
+    const folderSegments = folder.split('/').filter(segment => segment && segment !== '.' && segment !== '..');
+    if (folderSegments[0] === 'surgeries') folderSegments.shift();
+    const safeFolder = folderSegments.join('/');
+    const safeFilename = filename.replace(/[^a-zA-Z0-9._-]/g, '_');
+    const storageRef = ref(firebaseStorage, `surgeries/${uid}/${safeFolder}/${safeFilename}`);
     await uploadBytes(storageRef, blob);
 
     const url = await getDownloadURL(storageRef);
@@ -61,7 +68,6 @@ const LOCAL_KEYS = {
   USERS: 'neurogestor_users',
   DOCTORS: 'neurogestor_doctors',
   HOSPITALS: 'neurogestor_hospitals',
-  SESSION: 'neurogestor_session',
   GOOGLE_CLIENT_ID: 'neurogestor_google_client_id',
   MIGRATED: 'neurogestor_firestore_migrated',
   PASSWORDS: 'neurogestor_passwords',
@@ -86,6 +92,7 @@ let electrodeModelsUnsub: Unsubscribe | null = null;
 let learnedCategoriesUnsub: Unsubscribe | null = null;
 let learnedCategoriesCache: Record<string, Category> | null = null;
 let currentListenerEmail: string | null = null;
+let sessionMemory: User | null = null;
 
 /**
  * Encerra todas as conexões em tempo real e limpa os dados em memória/disco
@@ -126,6 +133,11 @@ export const cleanupStorageSession = () => {
 
   try {
     localStorage.removeItem(LOCAL_KEYS.SURGERIES);
+    localStorage.removeItem(LOCAL_KEYS.USERS);
+    localStorage.removeItem(LOCAL_KEYS.PASSWORDS);
+    localStorage.removeItem(LOCAL_KEYS.REPORT_TEMPLATES);
+    localStorage.removeItem(LOCAL_KEYS.ELECTRODE_MODELS);
+    localStorage.removeItem(LOCAL_KEYS.LEARNED_CATEGORIES);
   } catch (e) {}
 };
 
@@ -143,6 +155,10 @@ export const subscribeToPasswords = (cb: DataCallback<PasswordEntry>) => {
   const user = getSession();
   if (user && (user.is_demo || isDemoUser(user))) {
     cb(DEMO_FICTITIOUS_PASSWORDS);
+    return () => {};
+  }
+  if (!user || !(isAdminUser(user.email) || user.role === 'admin' || user.role === 'owner')) {
+    cb([]);
     return () => {};
   }
   listeners.passwords.push(cb);
@@ -223,8 +239,12 @@ export const initStorage = async () => {
   );
 
   // Listener de usuários em tempo real
+  const usersQuery = isOwnerOrAdmin
+    ? collection(db, COLLECTIONS.USERS)
+    : query(collection(db, COLLECTIONS.USERS), where('email', '==', sessionEmail));
+
   usersUnsub = onSnapshot(
-    collection(db, COLLECTIONS.USERS),
+    usersQuery,
     (snapshot) => {
       usersCache = snapshot.docs.map(d => d.data() as User);
       localStorage.setItem(LOCAL_KEYS.USERS, JSON.stringify(usersCache));
@@ -235,11 +255,15 @@ export const initStorage = async () => {
   );
 
   // listeners de documentos e senhas
-  passwordsUnsub = onSnapshot(collection(db, COLLECTIONS.PASSWORDS), (snap) => {
-    passwordsCache = snap.docs.map(d => d.data() as PasswordEntry);
-    localStorage.setItem(LOCAL_KEYS.PASSWORDS, JSON.stringify(passwordsCache));
-    listeners.passwords.forEach(cb => cb(passwordsCache!));
-  });
+  if (isOwnerOrAdmin) {
+    passwordsUnsub = onSnapshot(collection(db, COLLECTIONS.PASSWORDS), (snap) => {
+      // Credential records are intentionally kept in memory only.
+      passwordsCache = snap.docs.map(d => d.data() as PasswordEntry);
+      listeners.passwords.forEach(cb => cb(passwordsCache!));
+    }, (error) => {
+      console.warn('[NeuroGestor] Não foi possível carregar o cofre de credenciais:', error.code);
+    });
+  }
 
   reportTemplatesUnsub = onSnapshot(collection(db, COLLECTIONS.REPORT_TEMPLATES), (snap) => {
     reportTemplatesCache = snap.docs.map(d => d.data() as ReportTemplate);
@@ -271,7 +295,7 @@ export const initStorage = async () => {
   if (!alreadyMigrated) {
     try {
       // Verificação primária: O Firestore já tem dados? Se sim, não há nada para migrar.
-      const firestoreCount = await getDocs(query(collection(db, COLLECTIONS.SURGERIES)));
+      const firestoreCount = await getDocs(surgeriesQuery);
       if (!firestoreCount.empty) {
         console.log('[NeuroGestor] Firestore já possui dados — migração ignorada para evitar duplicatas.');
         // Marca como migrado para não verificar novamente (otimização de performance)
@@ -281,7 +305,7 @@ export const initStorage = async () => {
         localStorage.removeItem(LOCAL_KEYS.USERS);
       } else {
         // Firestore está vazio: pode ser um usuário novo — migrar os dados locais
-        await migrateLocalToFirestore();
+        await migrateLocalToFirestore(sessionEmail, Boolean(isOwnerOrAdmin));
         localStorage.setItem(LOCAL_KEYS.MIGRATED, 'true');
         // Após migração bem-sucedida, limpa os dados brutos do localStorage
         // para que nunca sejam reimportados, mesmo que a flag some
@@ -297,30 +321,33 @@ export const initStorage = async () => {
 /**
  * Migra dados existentes do localStorage para o Firestore.
  */
-const migrateLocalToFirestore = async () => {
+const migrateLocalToFirestore = async (sessionEmail: string | null, isOwnerOrAdmin: boolean) => {
   try {
     // Migrar cirurgias
     const localSurgeries = localStorage.getItem(LOCAL_KEYS.SURGERIES);
     if (localSurgeries) {
       const surgeries: Surgery[] = JSON.parse(localSurgeries);
-      if (surgeries.length > 0) {
+      const scopedSurgeries = isOwnerOrAdmin
+        ? surgeries
+        : surgeries.filter(s => s.owner_email === sessionEmail);
+      if (scopedSurgeries.length > 0) {
         // Usar batches para eficiência (máx 500 por batch)
         const batchSize = 450;
-        for (let i = 0; i < surgeries.length; i += batchSize) {
+        for (let i = 0; i < scopedSurgeries.length; i += batchSize) {
           const batch = writeBatch(db);
-          const chunk = surgeries.slice(i, i + batchSize);
+          const chunk = scopedSurgeries.slice(i, i + batchSize);
           chunk.forEach(s => {
             const ref = doc(db, COLLECTIONS.SURGERIES, s.id);
             batch.set(ref, s, { merge: true });
           });
           await batch.commit();
         }
-        console.log(`[NeuroGestor] Migradas ${surgeries.length} cirurgias para Firestore.`);
+        console.log(`[NeuroGestor] Migradas ${scopedSurgeries.length} cirurgias para Firestore.`);
       }
     }
 
     // Migrar usuários
-    const localUsers = localStorage.getItem(LOCAL_KEYS.USERS);
+    const localUsers = isOwnerOrAdmin ? localStorage.getItem(LOCAL_KEYS.USERS) : null;
     if (localUsers) {
       const users: User[] = JSON.parse(localUsers);
       if (users.length > 0) {
@@ -335,11 +362,11 @@ const migrateLocalToFirestore = async () => {
     }
 
     // Migrar médicos e hospitais para config
-    const localDoctors = localStorage.getItem(LOCAL_KEYS.DOCTORS);
+    const localDoctors = isOwnerOrAdmin ? localStorage.getItem(LOCAL_KEYS.DOCTORS) : null;
     if (localDoctors) {
       await setDoc(doc(db, COLLECTIONS.CONFIG, 'doctors'), { list: JSON.parse(localDoctors) }, { merge: true });
     }
-    const localHospitals = localStorage.getItem(LOCAL_KEYS.HOSPITALS);
+    const localHospitals = isOwnerOrAdmin ? localStorage.getItem(LOCAL_KEYS.HOSPITALS) : null;
     if (localHospitals) {
       await setDoc(doc(db, COLLECTIONS.CONFIG, 'hospitals'), { list: JSON.parse(localHospitals) }, { merge: true });
     }
@@ -394,7 +421,14 @@ export const getSurgeries = (): Surgery[] => {
   if (surgeriesCache !== null) return surgeriesCache;
   // Fallback para localStorage (offline ou antes do listener conectar)
   const data = localStorage.getItem(LOCAL_KEYS.SURGERIES);
-  return data ? JSON.parse(data) : [];
+  if (!data) return [];
+  try {
+    const parsed = JSON.parse(data);
+    return Array.isArray(parsed) ? parsed : [];
+  } catch {
+    localStorage.removeItem(LOCAL_KEYS.SURGERIES);
+    return [];
+  }
 };
 
 export const saveSurgery = async (surgery: Surgery) => {
@@ -403,9 +437,10 @@ export const saveSurgery = async (surgery: Surgery) => {
     saveDemoMockSurgery(surgery);
     return;
   }
+  if (!user) throw new Error('Sessão de autenticação ausente.');
   const surgeryWithOwner = cleanUndefined({
     ...surgery,
-    owner_email: surgery.owner_email || user?.email || 'rafaelleaobh@gmail.com'
+    owner_email: surgery.owner_email || user.email
   });
 
   // Atualiza Firestore (fonte primária)
@@ -434,6 +469,7 @@ export const saveSurgeriesBatch = async (newSurgeries: Surgery[]): Promise<numbe
     newSurgeries.forEach(s => saveDemoMockSurgery(s));
     return newSurgeries.length;
   }
+  if (!user) throw new Error('Sessão de autenticação ausente.');
   const existing = getSurgeries();
   const toAdd: Surgery[] = [];
 
@@ -451,7 +487,7 @@ export const saveSurgeriesBatch = async (newSurgeries: Surgery[]): Promise<numbe
     const itemWithId: Surgery = {
       ...newItem,
       id: newItem.id || crypto.randomUUID(),
-      owner_email: newItem.owner_email || user?.email || 'rafaelleaobh@gmail.com'
+      owner_email: newItem.owner_email || user.email
     };
 
     const isDuplicate = userExisting.some(old => {
@@ -490,7 +526,7 @@ export const saveSurgeriesBatch = async (newSurgeries: Surgery[]): Promise<numbe
       chunk.forEach(s => {
         const surgeryWithOwner = cleanUndefined({
           ...s,
-          owner_email: s.owner_email || user?.email || 'rafaelleaobh@gmail.com'
+          owner_email: s.owner_email || user.email
         });
         batch.set(doc(db, COLLECTIONS.SURGERIES, s.id), surgeryWithOwner);
       });
@@ -521,6 +557,7 @@ export const updateSurgeriesBatch = async (updatedSurgeries: Surgery[]) => {
     updatedSurgeries.forEach(s => saveDemoMockSurgery(s));
     return;
   }
+  if (!user) throw new Error('Sessão de autenticação ausente.');
 
   // Salva no Firestore em batches (Update/Set com merge)
   try {
@@ -531,7 +568,7 @@ export const updateSurgeriesBatch = async (updatedSurgeries: Surgery[]) => {
       chunk.forEach(s => {
         const surgeryWithOwner = cleanUndefined({
           ...s,
-          owner_email: s.owner_email || user?.email || 'rafaelleaobh@gmail.com'
+          owner_email: s.owner_email || user.email
         });
         batch.set(doc(db, COLLECTIONS.SURGERIES, s.id), surgeryWithOwner, { merge: true });
       });
@@ -806,8 +843,14 @@ export const getUsers = (): User[] => {
     return [...usersCache];
   }
   const data = localStorage.getItem(LOCAL_KEYS.USERS);
-  const parsed = data ? JSON.parse(data) : [];
-  return Array.isArray(parsed) ? [...parsed] : [];
+  if (!data) return [];
+  try {
+    const parsed = JSON.parse(data);
+    return Array.isArray(parsed) ? [...parsed] : [];
+  } catch {
+    localStorage.removeItem(LOCAL_KEYS.USERS);
+    return [];
+  }
 };
 
 export const saveUser = async (user: User) => {
@@ -839,6 +882,43 @@ export const saveUser = async (user: User) => {
   } catch (e) {
     console.warn('[NeuroGestor] Falha ao persistir usuários localmente.');
   }
+};
+
+/** Obtém ou cria o perfil associado ao usuário autenticado pelo Firebase. */
+export const getOrCreateUserProfile = async (firebaseUser: {
+  uid: string;
+  email: string | null;
+  displayName: string | null;
+  photoURL: string | null;
+}): Promise<User> => {
+  const email = firebaseUser.email?.toLowerCase().trim();
+  if (!email) throw new Error('A conta autenticada não possui e-mail.');
+
+  const profileRef = doc(db, COLLECTIONS.USERS, email);
+  const existing = await getDoc(profileRef);
+  if (existing.exists()) return { ...existing.data(), email } as User;
+
+  const isOwnerAdmin = isAdminUser(email);
+  const safeName = (firebaseUser.displayName || email.split('@')[0])
+    .replace(/[\u0000-\u001F\u007F]/g, '')
+    .replace(/\s+/g, ' ')
+    .trim()
+    .slice(0, 120);
+  const profile: User = {
+    email,
+    name: safeName || 'Usuário NeuroGestor',
+    picture: firebaseUser.photoURL || undefined,
+    status: isOwnerAdmin ? 'APPROVED' : 'PENDING',
+    role: isOwnerAdmin ? 'owner' : 'user',
+    onboarding_completed: isOwnerAdmin,
+    financial_config: isOwnerAdmin ? { pricing_model: 'legacy_camarinha' } : undefined,
+    team_id: isOwnerAdmin ? 'camarinha' : undefined,
+    team_name: isOwnerAdmin ? 'Equipe Camarinha' : undefined,
+    auth_uid: firebaseUser.uid
+  };
+
+  await setDoc(profileRef, cleanUndefinedForFirestore(profile));
+  return profile;
 };
 
 export const updateUserStatus = async (email: string, status: 'APPROVED' | 'DENIED' | 'PENDING') => {
@@ -967,51 +1047,13 @@ export const deleteUser = async (email: string) => {
 };
 
 // ============================================================
-// SESSÃO (apenas local — cada dispositivo mantém sua sessão)
+// SESSÃO (somente em memória; a persistência da identidade é gerida pelo Firebase Auth)
 // ============================================================
 
-export const getSession = (): User | null => {
-  const data = localStorage.getItem(LOCAL_KEYS.SESSION);
-  if (!data) return null;
-
-  const sessionUser = JSON.parse(data) as User;
-
-  // Usuário de demonstração não precisa existir na coleção de usuários do Firestore
-  if (sessionUser.is_demo || sessionUser.email === 'visitante@neurogestor.demo') {
-    return sessionUser;
-  }
-
-  // Se ainda não carregamos do Firestore, confiamos no que está no localStorage/Sessão
-  if (usersCache === null) {
-    const localUsersData = localStorage.getItem(LOCAL_KEYS.USERS);
-    if (!localUsersData) return sessionUser; // Primeira vez, confiamos na sessão
-
-    const localUsers = JSON.parse(localUsersData) as User[];
-    const match = localUsers.find(u => u.email === sessionUser.email);
-    return match || sessionUser;
-  }
-
-  const freshUser = usersCache.find(u => u.email === sessionUser.email);
-
-  if (!freshUser) {
-    // Só removemos se tivermos certeza que o usuário não existe mais no banco
-    localStorage.removeItem(LOCAL_KEYS.SESSION);
-    return null;
-  }
-
-  return freshUser;
-};
+export const getSession = (): User | null => sessionMemory;
 
 export const setSession = (user: User | null) => {
-  if (user) {
-    try {
-      localStorage.setItem(LOCAL_KEYS.SESSION, JSON.stringify(user));
-    } catch (e) {
-      console.warn('[NeuroGestor] Erro ao salvar sessão no localStorage (Quota?).');
-    }
-  } else {
-    localStorage.removeItem(LOCAL_KEYS.SESSION);
-  }
+  sessionMemory = user;
 };
 
 // ============================================================
@@ -1074,8 +1116,7 @@ export const getPasswords = (): PasswordEntry[] => {
     return DEMO_FICTITIOUS_PASSWORDS;
   }
   if (passwordsCache) return passwordsCache;
-  const data = localStorage.getItem(LOCAL_KEYS.PASSWORDS);
-  return data ? JSON.parse(data) : [];
+  return [];
 };
 
 export const savePassword = async (pw: PasswordEntry) => {
@@ -1083,6 +1124,9 @@ export const savePassword = async (pw: PasswordEntry) => {
   if (user && (user.is_demo || isDemoUser(user))) {
     console.warn('[NeuroGestor] Salvar senha bloqueado em modo demonstração.');
     return;
+  }
+  if (!user || !(isAdminUser(user.email) || user.role === 'admin' || user.role === 'owner')) {
+    throw new Error('Acesso não autorizado ao cofre de credenciais.');
   }
   await setDoc(doc(db, COLLECTIONS.PASSWORDS, pw.id), pw);
 };
@@ -1092,6 +1136,9 @@ export const deletePassword = async (id: string) => {
   if (user && (user.is_demo || isDemoUser(user))) {
     console.warn('[NeuroGestor] Excluir senha bloqueado em modo demonstração.');
     return;
+  }
+  if (!user || !(isAdminUser(user.email) || user.role === 'admin' || user.role === 'owner')) {
+    throw new Error('Acesso não autorizado ao cofre de credenciais.');
   }
   await deleteDoc(doc(db, COLLECTIONS.PASSWORDS, id));
 };
