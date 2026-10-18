@@ -3,10 +3,14 @@
   "private": true,
   "version": "0.0.0",
   "type": "module",
+  "engines": {
+    "node": ">=22.6.0"
+  },
   "scripts": {
     "dev": "vite",
     "build": "vite build",
-    "preview": "vite preview"
+    "preview": "vite preview",
+    "test:rules": "firebase emulators:exec --only firestore,storage --project neurogestor-rules-test \"node --no-warnings --experimental-strip-types --test firebase/tests/rules.test.ts\""
   },
   "dependencies": {
     "@google/genai": "^1.42.0",
@@ -21,9 +25,11 @@
     "xlsx": "^0.18.5"
   },
   "devDependencies": {
+    "@firebase/rules-unit-testing": "^5.0.2",
     "@types/node": "^22.14.0",
     "@vitejs/plugin-react": "^5.0.0",
     "@vudovn/ag-kit": "^2.0.0",
+    "firebase-tools": "^15.34.0",
     "typescript": "~5.8.2",
     "vite": "^6.2.0"
   }

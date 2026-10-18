@@ -339,7 +339,8 @@ const Dashboard: React.FC<{ onLogout: () => void }> = ({ onLogout }) => {
     if (isDemo) {
       return surgeries && surgeries.length > 0 ? surgeries : getDemoMockSurgeries();
     }
-    if (isAssistant || (isOwner && viewScope === 'global')) {
+    // Assistente não é admin: só enxerga as próprias cirurgias (alinhado às regras do Firestore)
+    if (!isAssistant && isOwner && viewScope === 'global') {
       return surgeries;
     }
     return surgeries.filter(s => {
@@ -816,12 +817,12 @@ const Dashboard: React.FC<{ onLogout: () => void }> = ({ onLogout }) => {
     setProcessingMsg(`Gravando ${batchReviewData.length} cirurgias no sistema...`);
 
     try {
-      // Higieniza e garante o owner_email correto em cada registro
-      const sanitizedBatch: Surgery[] = batchReviewData.map(item => {
+      // Higieniza e garante o owner_email correto em cada registro, sem forçar crypto.randomUUID(),
+      // garantindo que saveSurgeriesBatch derive o ID estável idempotente baseado em proprietário, paciente, data e procedimento
+      const sanitizedBatch = batchReviewData.map(item => {
         const proc = item.procedimento?.trim() || 'Procedimento a Definir';
-        return {
+        const surgeryObj: any = {
           ...item,
-          id: item.id || crypto.randomUUID(),
           owner_email: currentUser?.email || item.owner_email || 'rafaelleaobh@gmail.com',
           paciente: item.paciente?.trim() || 'Paciente Não Identificado',
           procedimento: proc,
@@ -836,6 +837,10 @@ const Dashboard: React.FC<{ onLogout: () => void }> = ({ onLogout }) => {
           status: item.status || Status.REALIZADO,
           created_at: item.created_at || Date.now()
         };
+        // Remove qualquer id pré-atribuído no lote OCR para permitir que saveSurgeriesBatch
+        // derive os IDs determinísticos baseados em proprietário, paciente, data e procedimento
+        delete surgeryObj.id;
+        return surgeryObj as Surgery;
       });
 
       const savedCount = await saveSurgeriesBatch(sanitizedBatch);
@@ -913,7 +918,8 @@ const Dashboard: React.FC<{ onLogout: () => void }> = ({ onLogout }) => {
       const raw = await parseExcelFile(file);
       const mapped = await mapSpreadsheetWithAI(raw);
       if (mapped.length > 0) {
-        saveSurgeriesBatch(mapped);
+        const mappedClean = mapped.map(({ id, ...rest }) => rest);
+        await saveSurgeriesBatch(mappedClean);
         refreshData();
 
         // Tenta ajustar o filtro para o mês do primeiro item importado

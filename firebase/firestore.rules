@@ -1,63 +1,108 @@
 rules_version = '2';
 service cloud.firestore {
   match /databases/{database}/documents {
-    
-    // ============================================================
-    // GOVERNANÇA E CONTROLE DE ACESSO - NEUROGESTOR
-    // Modelo: Deny by default -> Autenticação -> RBAC (Role-Based)
-    // ============================================================
-    
-    // Função auxiliar para verificar autenticação
     function isAuthenticated() {
-      return request.auth != null;
+      return request.auth != null && request.auth.token.email_verified == true;
     }
 
-    // Função auxiliar para verificar se o usuário é Administrador/Proprietário
+    function isMasterEmail() {
+      return request.auth.token.email == 'rafaelleaobh@gmail.com' ||
+        request.auth.token.email == 'medleaobh@gmail.com';
+    }
+
+    // Papel e status vêm do perfil em /users/{email}; não há custom claims configuradas.
+    function hasProfile() {
+      return exists(/databases/$(database)/documents/users/$(request.auth.token.email));
+    }
+
+    function profile() {
+      return get(/databases/$(database)/documents/users/$(request.auth.token.email)).data;
+    }
+
     function isAdmin() {
-      return isAuthenticated() && 
-        (request.auth.token.role == 'admin' || 
-         request.auth.token.role == 'owner' || 
-         request.auth.token.email == 'rafaelleaobh@gmail.com' ||
-         request.auth.token.email == 'medleaobh@gmail.com');
+      return isAuthenticated() && (
+        isMasterEmail() ||
+        (hasProfile() && profile().status == 'APPROVED' && profile().role in ['admin', 'owner'])
+      );
     }
 
-    // Regra para Cirurgias (Dados Clínicos Sensíveis - LGPD Art. 5º, II)
+    // Usuários PENDING/DENIED não leem nem gravam cirurgias.
+    function isApproved() {
+      return isAuthenticated() && (isMasterEmail() || (hasProfile() && profile().status == 'APPROVED'));
+    }
+
+    // O papel 'assistant' (secretária) NÃO é admin: só acessa as próprias cirurgias, como usuário comum.
+    function owns(data) {
+      return isApproved() && data.owner_email == request.auth.token.email;
+    }
+
     match /surgeries/{surgeryId} {
-      // Bloqueio padrão para acesso anônimo não autorizado
-      allow read: if isAuthenticated();
-      allow create, update: if isAuthenticated();
+      allow read: if isAdmin() || owns(resource.data);
+      allow create: if isAdmin() || owns(request.resource.data);
+      allow update: if isAdmin() || (owns(resource.data) && owns(request.resource.data));
+      allow delete: if isAdmin() || owns(resource.data);
+    }
+
+    match /users/{userId} {
+      // get usa só o {userId}: perfil novo (documento inexistente) precisa ser legível no primeiro login.
+      allow get: if isAdmin() || (isAuthenticated() && userId == request.auth.token.email);
+      allow list: if isAdmin() || (isAuthenticated() && resource.data.email == request.auth.token.email);
+      // Autocadastro sempre como usuário PENDING, sem equipe nem configuração financeira.
+      allow create: if isAdmin() || (
+        isAuthenticated()
+        && userId == request.auth.token.email
+        && request.resource.data.email == request.auth.token.email
+        && request.resource.data.auth_uid == request.auth.uid
+        && request.resource.data.status == 'PENDING'
+        && request.resource.data.role == 'user'
+        && !('team_id' in request.resource.data)
+        && !('team_name' in request.resource.data)
+        && !('financial_config' in request.resource.data)
+      );
+      allow update: if isAdmin() || (
+        isAuthenticated()
+        && userId == request.auth.token.email
+        && resource.data.email == request.auth.token.email
+        && resource.data.auth_uid == request.auth.uid
+        && request.resource.data.email == resource.data.email
+        && request.resource.data.auth_uid == resource.data.auth_uid
+        && request.resource.data.diff(resource.data).affectedKeys().hasOnly([
+          'name', 'picture', 'crm', 'uf', 'role_title', 'onboarding_completed', 'fcmToken'
+        ])
+      );
       allow delete: if isAdmin();
     }
 
-    // Regra para Usuários e Acessos
-    match /users/{userId} {
-      allow read: if isAuthenticated();
-      allow write: if isAdmin() || (isAuthenticated() && request.auth.uid == userId);
-    }
-
-    // Regra para Cofre de Senhas e Credenciais Administrativas
+    // Credential records are restricted to admins and are never exposed to a normal user.
     match /passwords/{passwordId} {
       allow read, write: if isAdmin();
     }
 
-    // Configurações e Modelos do Sistema
+    // Menor privilégio: dados de referência só para aprovados que não sejam assistente.
+    // PENDING, DENIED e assistant não leem; escrita fica restrita a admin.
+    function canReadReference() {
+      return isAdmin() || (isApproved() && !(hasProfile() && profile().role == 'assistant'));
+    }
+
     match /config/{configId} {
-      allow read: if isAuthenticated();
+      allow read: if canReadReference();
       allow write: if isAdmin();
     }
+
     match /report_templates/{templateId} {
-      allow read: if isAuthenticated();
+      allow read: if canReadReference();
       allow write: if isAdmin();
     }
+
     match /electrode_models/{modelId} {
-      allow read: if isAuthenticated();
+      allow read: if canReadReference();
       allow write: if isAdmin();
     }
+
     match /learned_categories/{catId} {
       allow read, write: if isAuthenticated();
     }
 
-    // BLOQUEIO GERAL: Qualquer outra coleção ou documento não especificado é negado
     match /{document=**} {
       allow read, write: if false;
     }

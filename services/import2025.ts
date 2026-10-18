@@ -320,11 +320,10 @@ const RAW_2025: string[][] = [
 
 /**
  * Converte os dados brutos em objetos Surgery e salva no Firestore.
- * Usa saveSurgeriesBatch que faz deduplicação automática.
+ * Usa saveSurgeriesBatch que faz deduplicação automática e derivação de ID estável idempotente.
  */
 export const importData2025 = async (): Promise<number> => {
-    const surgeries: Surgery[] = RAW_2025.map(([data, paciente, procedimento, medico, hospital]) => ({
-        id: crypto.randomUUID(),
+    const surgeries = RAW_2025.map(([data, paciente, procedimento, medico, hospital]) => ({
         data: data, // Já está em YYYY-MM-DD
         paciente,
         procedimento,
