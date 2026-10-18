@@ -120,7 +120,11 @@ const App: React.FC = () => {
         }
         return surgery;
       });
-      if (hasChanges) void updateSurgeriesBatch(reprocessed);
+      if (hasChanges) {
+        updateSurgeriesBatch(reprocessed).catch(() => {
+          console.warn('[NeuroGestor] Não foi possível gravar a reclassificação automática.');
+        });
+      }
     }, 2000);
 
     return () => window.clearTimeout(timer);

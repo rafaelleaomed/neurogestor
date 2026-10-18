@@ -913,7 +913,7 @@ const Dashboard: React.FC<{ onLogout: () => void }> = ({ onLogout }) => {
       const raw = await parseExcelFile(file);
       const mapped = await mapSpreadsheetWithAI(raw);
       if (mapped.length > 0) {
-        saveSurgeriesBatch(mapped);
+        await saveSurgeriesBatch(mapped);
         refreshData();
 
         // Tenta ajustar o filtro para o mês do primeiro item importado

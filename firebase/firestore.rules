@@ -5,17 +5,34 @@ service cloud.firestore {
       return request.auth != null && request.auth.token.email_verified == true;
     }
 
+    function isMasterEmail() {
+      return request.auth.token.email == 'rafaelleaobh@gmail.com' ||
+        request.auth.token.email == 'medleaobh@gmail.com';
+    }
+
+    // Papel e status vêm do perfil em /users/{email}; não há custom claims configuradas.
+    function hasProfile() {
+      return exists(/databases/$(database)/documents/users/$(request.auth.token.email));
+    }
+
+    function profile() {
+      return get(/databases/$(database)/documents/users/$(request.auth.token.email)).data;
+    }
+
     function isAdmin() {
       return isAuthenticated() && (
-        request.auth.token.role == 'admin' ||
-        request.auth.token.role == 'owner' ||
-        request.auth.token.email == 'rafaelleaobh@gmail.com' ||
-        request.auth.token.email == 'medleaobh@gmail.com'
+        isMasterEmail() ||
+        (hasProfile() && profile().status == 'APPROVED' && profile().role in ['admin', 'owner'])
       );
     }
 
+    // Usuários PENDING/DENIED não leem nem gravam cirurgias.
+    function isApproved() {
+      return isAuthenticated() && (isMasterEmail() || (hasProfile() && profile().status == 'APPROVED'));
+    }
+
     function owns(data) {
-      return isAuthenticated() && data.owner_email == request.auth.token.email;
+      return isApproved() && data.owner_email == request.auth.token.email;
     }
 
     match /surgeries/{surgeryId} {
@@ -27,17 +44,24 @@ service cloud.firestore {
 
     match /users/{userId} {
       allow read: if isAdmin() || (isAuthenticated() && resource.data.email == request.auth.token.email);
-      allow create: if isAuthenticated()
+      // Autocadastro sempre como usuário PENDING, sem equipe nem configuração financeira.
+      allow create: if isAdmin() || (
+        isAuthenticated()
         && request.resource.data.email == request.auth.token.email
-        && request.resource.data.auth_uid == request.auth.uid;
+        && request.resource.data.auth_uid == request.auth.uid
+        && request.resource.data.status == 'PENDING'
+        && request.resource.data.role == 'user'
+        && !('team_id' in request.resource.data)
+        && !('team_name' in request.resource.data)
+        && !('financial_config' in request.resource.data)
+      );
       allow update: if isAdmin() || (
         isAuthenticated()
         && resource.data.email == request.auth.token.email
         && request.resource.data.email == resource.data.email
         && request.resource.data.auth_uid == resource.data.auth_uid
         && request.resource.data.diff(resource.data).affectedKeys().hasOnly([
-          'name', 'picture', 'crm', 'uf', 'role_title', 'onboarding_completed',
-          'financial_config', 'team_id', 'team_name', 'fcmToken'
+          'name', 'picture', 'crm', 'uf', 'role_title', 'onboarding_completed', 'fcmToken'
         ])
       );
       allow delete: if isAdmin();

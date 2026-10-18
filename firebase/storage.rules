@@ -5,19 +5,32 @@ service firebase.storage {
       return request.auth != null && request.auth.token.email_verified == true;
     }
 
-    function isAdmin() {
+    function isMasterEmail() {
+      return request.auth.token.email == 'rafaelleaobh@gmail.com' ||
+        request.auth.token.email == 'medleaobh@gmail.com';
+    }
+
+    // Papel e status vêm do perfil no Firestore; não há custom claims configuradas.
+    function profile() {
+      return firestore.get(/databases/(default)/documents/users/$(request.auth.token.email)).data;
+    }
+
+    function isApproved() {
       return isAuthenticated() && (
-        request.auth.token.role == 'admin' ||
-        request.auth.token.role == 'owner' ||
-        request.auth.token.email == 'rafaelleaobh@gmail.com' ||
-        request.auth.token.email == 'medleaobh@gmail.com'
+        isMasterEmail() ||
+        (firestore.exists(/databases/(default)/documents/users/$(request.auth.token.email))
+          && profile().status == 'APPROVED')
       );
     }
 
+    function isAdmin() {
+      return isApproved() && (isMasterEmail() || profile().role in ['admin', 'owner']);
+    }
+
     match /surgeries/{uid}/{surgeryId}/{allPaths=**} {
-      allow read: if isAdmin() || (isAuthenticated() && request.auth.uid == uid);
+      allow read: if isAdmin() || (isApproved() && request.auth.uid == uid);
       allow write: if isAdmin() || (
-        isAuthenticated()
+        isApproved()
         && request.auth.uid == uid
         && request.resource.size < 15 * 1024 * 1024
         && request.resource.contentType.matches('image/.*')

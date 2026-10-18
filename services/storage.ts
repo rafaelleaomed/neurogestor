@@ -208,8 +208,7 @@ export const initStorage = async () => {
     isMasterAdmin(currentSession.email) ||
     isAdminUser(currentSession.email) ||
     currentSession.role === 'owner' ||
-    currentSession.role === 'admin' ||
-    currentSession.role === 'assistant'
+    currentSession.role === 'admin'
   );
 
   // Consulta do Firestore com isolamento estrito:
@@ -533,7 +532,8 @@ export const saveSurgeriesBatch = async (newSurgeries: Surgery[]): Promise<numbe
       await batch.commit();
     }
   } catch (error) {
-    console.error('[NeuroGestor] Erro ao salvar batch no Firestore (salvando localmente como fallback):', error);
+    console.error('[NeuroGestor] Erro ao salvar batch no Firestore:', error);
+    throw error;
   }
 
   // Atualiza cache em memória e localStorage sempre
@@ -576,6 +576,7 @@ export const updateSurgeriesBatch = async (updatedSurgeries: Surgery[]) => {
     }
   } catch (error) {
     console.error('[NeuroGestor] Erro ao atualizar batch no Firestore:', error);
+    throw error;
   }
 
   const existing = getSurgeries();
