@@ -118,6 +118,7 @@ const clearLocalCaches = () => {
 let surgeriesCache: Surgery[] | null = null;
 let usersCache: User[] | null = null;
 let usersCacheOwner: { email: string; uid?: string } | null = null;
+let memoryCacheOwner: { email: string; uid?: string } | null = null;
 let surgeriesUnsub: Unsubscribe | null = null;
 let usersUnsub: Unsubscribe | null = null;
 let passwordsCache: PasswordEntry[] | null = null;
@@ -131,16 +132,30 @@ let learnedCategoriesCache: Record<string, Category> | null = null;
 let currentListenerEmail: string | null = null;
 let sessionMemory: User | null = null;
 
-const syncUsersCacheOwner = () => {
+const syncMemoryCacheOwner = () => {
   const session = getSession();
   if (session?.email) {
-    usersCacheOwner = {
+    memoryCacheOwner = {
       email: normalizeEmail(session.email),
       uid: session.auth_uid
     };
   } else {
-    usersCacheOwner = null;
+    memoryCacheOwner = null;
   }
+  usersCacheOwner = memoryCacheOwner;
+};
+
+const syncUsersCacheOwner = () => {
+  syncMemoryCacheOwner();
+};
+
+const isMemoryCacheValidForActiveSession = (): boolean => {
+  const session = getSession();
+  if (!session?.email || !memoryCacheOwner) return false;
+  const currentEmail = normalizeEmail(session.email);
+  const currentUid = session.auth_uid;
+  return memoryCacheOwner.email === currentEmail &&
+    (!currentUid || !memoryCacheOwner.uid || memoryCacheOwner.uid === currentUid);
 };
 
 /**
@@ -179,6 +194,7 @@ export const cleanupStorageSession = () => {
   reportTemplatesCache = null;
   electrodeModelsCache = null;
   learnedCategoriesCache = null;
+  memoryCacheOwner = null;
   currentListenerEmail = null;
 
   clearLocalCaches();
@@ -272,6 +288,17 @@ export const initStorage = async () => {
 
   if (surgeriesUnsub) return;
   currentListenerEmail = sessionEmail;
+  const listenerSessionEmail = sessionEmail;
+  const listenerSessionUid = currentSession?.auth_uid;
+
+  const isListenerActiveForCurrentSession = (): boolean => {
+    const active = getSession();
+    if (!active?.email) return false;
+    const activeEmail = normalizeEmail(active.email);
+    if (activeEmail !== listenerSessionEmail) return false;
+    if (listenerSessionUid && active.auth_uid && active.auth_uid !== listenerSessionUid) return false;
+    return true;
+  };
 
   const isOwnerOrAdmin = isPrivilegedUser(currentSession);
 
@@ -287,7 +314,9 @@ export const initStorage = async () => {
   surgeriesUnsub = onSnapshot(
     surgeriesQuery,
     (snapshot) => {
+      if (!isListenerActiveForCurrentSession()) return;
       surgeriesCache = snapshot.docs.map(d => ({ id: d.id, ...d.data() } as Surgery));
+      syncMemoryCacheOwner();
       // Atualiza localStorage como cache offline (silencioso se falhar por falta de espaço)
       try {
         if (sessionEmail && isCacheOwnedBy(sessionEmail)) {
@@ -312,8 +341,9 @@ export const initStorage = async () => {
   usersUnsub = onSnapshot(
     usersQuery,
     (snapshot) => {
+      if (!isListenerActiveForCurrentSession()) return;
       usersCache = snapshot.docs.map(d => d.data() as User);
-      usersCacheOwner = sessionEmail ? { email: sessionEmail, uid: currentSession?.auth_uid } : null;
+      syncMemoryCacheOwner();
       if (sessionEmail && isCacheOwnedBy(sessionEmail)) {
         localStorage.setItem(LOCAL_KEYS.USERS, JSON.stringify(usersCache));
       }
@@ -326,8 +356,10 @@ export const initStorage = async () => {
   // listeners de documentos e senhas: não iniciar em coleções negadas
   if (isOwnerOrAdmin) {
     passwordsUnsub = onSnapshot(collection(db, COLLECTIONS.PASSWORDS), (snap) => {
+      if (!isListenerActiveForCurrentSession()) return;
       // Credential records are intentionally kept in memory only.
       passwordsCache = snap.docs.map(d => d.data() as PasswordEntry);
+      syncMemoryCacheOwner();
       listeners.passwords.forEach(cb => cb(passwordsCache!));
     }, (error) => {
       console.warn('[NeuroGestor] Não foi possível carregar o cofre de credenciais:', error.code);
@@ -336,7 +368,9 @@ export const initStorage = async () => {
 
   if (canAccessReferenceData(currentSession)) {
     reportTemplatesUnsub = onSnapshot(collection(db, COLLECTIONS.REPORT_TEMPLATES), (snap) => {
+      if (!isListenerActiveForCurrentSession()) return;
       reportTemplatesCache = snap.docs.map(d => d.data() as ReportTemplate);
+      syncMemoryCacheOwner();
       if (sessionEmail && isCacheOwnedBy(sessionEmail)) {
         localStorage.setItem(LOCAL_KEYS.REPORT_TEMPLATES, JSON.stringify(reportTemplatesCache));
       }
@@ -346,7 +380,9 @@ export const initStorage = async () => {
     });
 
     electrodeModelsUnsub = onSnapshot(collection(db, COLLECTIONS.ELECTRODE_MODELS), (snap) => {
+      if (!isListenerActiveForCurrentSession()) return;
       electrodeModelsCache = snap.docs.map(d => d.data() as ElectrodeModel);
+      syncMemoryCacheOwner();
       if (sessionEmail && isCacheOwnedBy(sessionEmail)) {
         localStorage.setItem(LOCAL_KEYS.ELECTRODE_MODELS, JSON.stringify(electrodeModelsCache));
       }
@@ -358,12 +394,14 @@ export const initStorage = async () => {
 
   // Listener de categorias aprendidas
   learnedCategoriesUnsub = onSnapshot(collection(db, COLLECTIONS.LEARNED_CATEGORIES), (snap) => {
+    if (!isListenerActiveForCurrentSession()) return;
     const fresh: Record<string, Category> = {};
     snap.docs.forEach(d => {
       const data = d.data() as LearnedCategory;
       fresh[d.id] = data.category;
     });
     learnedCategoriesCache = fresh;
+    syncMemoryCacheOwner();
     localStorage.setItem(LOCAL_KEYS.LEARNED_CATEGORIES, JSON.stringify(fresh));
   });
 
@@ -502,7 +540,12 @@ export const getSurgeries = (): Surgery[] => {
     isPrivilegedUser(user)
       ? items
       : items.filter(s => normalizeEmail(s.owner_email) === normalizeEmail(user.email));
-  if (surgeriesCache !== null) return scope(surgeriesCache);
+  if (surgeriesCache !== null) {
+    if (isMemoryCacheValidForActiveSession()) {
+      return scope(surgeriesCache);
+    }
+    surgeriesCache = null;
+  }
   // Fallback para localStorage (offline ou antes do listener conectar), apenas se o cache for desta identidade
   if (!isCacheOwnedBy(user.email)) return [];
   const data = localStorage.getItem(LOCAL_KEYS.SURGERIES);
@@ -540,6 +583,8 @@ export const saveSurgery = async (surgery: Surgery) => {
     } else {
       surgeries.push(surgeryWithOwner);
     }
+    surgeriesCache = surgeries;
+    syncMemoryCacheOwner();
     localStorage.setItem(LOCAL_KEYS.SURGERIES, JSON.stringify(surgeries));
   } catch (e) {
     console.warn('[NeuroGestor] Falha ao atualizar cache local (Quota?). Firestore já salvo com sucesso.');
@@ -657,6 +702,7 @@ export const saveSurgeriesBatch = async (newSurgeries: Array<Omit<Surgery, 'id'>
   const combined = [...existing, ...toAdd];
   if (surgeriesCache !== null) {
     surgeriesCache = combined;
+    syncMemoryCacheOwner();
   }
   try {
     localStorage.setItem(LOCAL_KEYS.SURGERIES, JSON.stringify(combined));
@@ -703,6 +749,7 @@ export const updateSurgeriesBatch = async (updatedSurgeries: Surgery[]) => {
 
   if (surgeriesCache !== null) {
     surgeriesCache = newArray;
+    syncMemoryCacheOwner();
   }
   try {
     localStorage.setItem(LOCAL_KEYS.SURGERIES, JSON.stringify(newArray));
@@ -725,6 +772,7 @@ export const deleteSurgery = async (id: string) => {
 
   if (surgeriesCache !== null) {
     surgeriesCache = surgeriesCache.filter(s => s.id !== id);
+    syncMemoryCacheOwner();
   }
 
   // Atualiza localStorage como backup
@@ -790,6 +838,7 @@ export const deleteSurgeriesBatch = async (ids: string[], onProgress?: (progress
   // Atualizar cache em memória e LocalStorage
   if (surgeriesCache !== null) {
     surgeriesCache = surgeriesCache.filter(s => !validIds.includes(s.id));
+    syncMemoryCacheOwner();
   }
 
   try {
@@ -1179,6 +1228,10 @@ export const updateUserFcmToken = async (email: string, token: string) => {
 };
 
 export const deleteUser = async (email: string) => {
+  const session = getSession();
+  if (session && (session.is_demo || isDemoUser(session))) return;
+  if (!session || !isPrivilegedUser(session)) return;
+
   const cleanEmail = email.toLowerCase();
   try {
     await deleteDoc(doc(db, COLLECTIONS.USERS, cleanEmail));
@@ -1189,27 +1242,11 @@ export const deleteUser = async (email: string) => {
   const filtered = users.filter(u => u.email.toLowerCase() !== cleanEmail);
   usersCache = filtered.map(u => ({ ...u }));
   syncUsersCacheOwner();
-  localStorage.setItem(LOCAL_KEYS.USERS, JSON.stringify(filtered));
-};
-
-    const session = getSession();
-    if (session && session.email.toLowerCase() === cleanEmail) {
-      setSession({ ...session, fcmToken: token });
-    }
-  }
-};
-
-export const deleteUser = async (email: string) => {
-  const cleanEmail = email.toLowerCase();
   try {
-    await deleteDoc(doc(db, COLLECTIONS.USERS, cleanEmail));
-  } catch (error) {
-    console.error('[NeuroGestor] Erro ao deletar usuário do Firestore:', error);
+    localStorage.setItem(LOCAL_KEYS.USERS, JSON.stringify(filtered));
+  } catch (e) {
+    console.warn('[NeuroGestor] Falha ao persistir usuários localmente:', e);
   }
-  const users = getUsers();
-  const filtered = users.filter(u => u.email.toLowerCase() !== cleanEmail);
-  usersCache = filtered.map(u => ({ ...u }));
-  localStorage.setItem(LOCAL_KEYS.USERS, JSON.stringify(filtered));
 };
 
 // ============================================================
@@ -1220,6 +1257,15 @@ export const getSession = (): User | null => sessionMemory;
 
 export const setSession = (user: User | null) => {
   sessionMemory = user;
+  if (!user) {
+    cleanupStorageSession();
+  } else {
+    const nextEmail = normalizeEmail(user.email);
+    const nextUid = user.auth_uid;
+    if (memoryCacheOwner && (memoryCacheOwner.email !== nextEmail || (nextUid && memoryCacheOwner.uid && memoryCacheOwner.uid !== nextUid))) {
+      cleanupStorageSession();
+    }
+  }
 };
 
 // ============================================================
@@ -1232,12 +1278,6 @@ export const getGoogleClientId = (): string => {
 
 export const saveGoogleClientId = (id: string) => {
   localStorage.setItem(LOCAL_KEYS.GOOGLE_CLIENT_ID, id);
-};
-
-export const getDoctors = (): string[] => {
-  const data = localStorage.getItem(LOCAL_KEYS.DOCTORS);
-  const stored: string[] = data ? JSON.parse(data) : [];
-  return Array.from(new Set([...SEED_DOCTORS, ...stored])).sort();
 };
 
 export const getDoctors = (): string[] => {
@@ -1324,7 +1364,12 @@ export const getPasswords = (): PasswordEntry[] => {
     return DEMO_FICTITIOUS_PASSWORDS;
   }
   if (!user || !isPrivilegedUser(user)) return [];
-  if (passwordsCache) return [...passwordsCache];
+  if (passwordsCache) {
+    if (isMemoryCacheValidForActiveSession()) {
+      return [...passwordsCache];
+    }
+    passwordsCache = null;
+  }
   return [];
 };
 
@@ -1360,7 +1405,12 @@ export const getReportTemplates = (): ReportTemplate[] => {
   if (!user || !canAccessReferenceData(user)) {
     return [];
   }
-  if (reportTemplatesCache) return [...reportTemplatesCache];
+  if (reportTemplatesCache) {
+    if (isMemoryCacheValidForActiveSession()) {
+      return [...reportTemplatesCache];
+    }
+    reportTemplatesCache = null;
+  }
   if (!isCacheOwnedBy(user.email)) return [];
   const data = localStorage.getItem(LOCAL_KEYS.REPORT_TEMPLATES);
   try {
@@ -1404,7 +1454,12 @@ export const getElectrodeModels = (): ElectrodeModel[] => {
   if (!user || !canAccessReferenceData(user)) {
     return [];
   }
-  if (electrodeModelsCache) return [...electrodeModelsCache];
+  if (electrodeModelsCache) {
+    if (isMemoryCacheValidForActiveSession()) {
+      return [...electrodeModelsCache];
+    }
+    electrodeModelsCache = null;
+  }
   if (!isCacheOwnedBy(user.email)) return [];
   const data = localStorage.getItem(LOCAL_KEYS.ELECTRODE_MODELS);
   try {
@@ -1598,7 +1653,12 @@ export const autoNormalizeAllNames = async (onProgress?: (pct: number, count: nu
 // ============================================================
 
 export const getGlobalLearnedCategories = (): Record<string, Category> => {
-  if (learnedCategoriesCache) return learnedCategoriesCache;
+  if (learnedCategoriesCache) {
+    if (isMemoryCacheValidForActiveSession()) {
+      return learnedCategoriesCache;
+    }
+    learnedCategoriesCache = null;
+  }
   const data = localStorage.getItem(LOCAL_KEYS.LEARNED_CATEGORIES);
   return data ? JSON.parse(data) : {};
 };
@@ -1624,6 +1684,7 @@ export const saveLearnedCategoryGlobal = async (procedureName: string, category:
   current[id] = category;
   localStorage.setItem(LOCAL_KEYS.LEARNED_CATEGORIES, JSON.stringify(current));
   learnedCategoriesCache = current;
+  syncMemoryCacheOwner();
 };
 // ============================================================
 // BACKUP (Exportação Completa)

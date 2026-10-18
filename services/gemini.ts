@@ -427,7 +427,7 @@ export const performBatchLabelsOCR = async (
         const proc = ocrData.procedimento || "Procedimento a identificar";
 
         allResults.push({
-          id: crypto.randomUUID(),
+          id: '',
           paciente: ocrData.paciente || `Paciente a identificar (${fileName})`,
           procedimento: proc,
           medico: ocrData.medico || "Médico não informado",
@@ -446,7 +446,7 @@ export const performBatchLabelsOCR = async (
         // Mesmo em caso de falha pontual da IA, NUNCA descarta a imagem enviada pelo médico!
         // Cria um card com os dados provisórios informando o nome do arquivo para revisão
         allResults.push({
-          id: crypto.randomUUID(),
+          id: '',
           paciente: `Paciente a identificar (${fileName})`,
           procedimento: "Procedimento a identificar",
           medico: "Não informado",

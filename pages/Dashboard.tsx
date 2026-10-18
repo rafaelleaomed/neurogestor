@@ -817,8 +817,8 @@ const Dashboard: React.FC<{ onLogout: () => void }> = ({ onLogout }) => {
     setProcessingMsg(`Gravando ${batchReviewData.length} cirurgias no sistema...`);
 
     try {
-      // Higieniza e garante o owner_email correto em cada registro, sem forçar crypto.randomUUID()
-      // para permitir que saveSurgeriesBatch derive o ID estável idempotente
+      // Higieniza e garante o owner_email correto em cada registro, sem forçar crypto.randomUUID(),
+      // garantindo que saveSurgeriesBatch derive o ID estável idempotente baseado em proprietário, paciente, data e procedimento
       const sanitizedBatch = batchReviewData.map(item => {
         const proc = item.procedimento?.trim() || 'Procedimento a Definir';
         const surgeryObj: any = {
@@ -837,11 +837,9 @@ const Dashboard: React.FC<{ onLogout: () => void }> = ({ onLogout }) => {
           status: item.status || Status.REALIZADO,
           created_at: item.created_at || Date.now()
         };
-        if (item.id && item.id.trim()) {
-          surgeryObj.id = item.id.trim();
-        } else {
-          delete surgeryObj.id;
-        }
+        // Remove qualquer id pré-atribuído no lote OCR para permitir que saveSurgeriesBatch
+        // derive os IDs determinísticos baseados em proprietário, paciente, data e procedimento
+        delete surgeryObj.id;
         return surgeryObj as Surgery;
       });
 

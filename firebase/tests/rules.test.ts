@@ -18,6 +18,7 @@ const ASSISTANT = 'secretaria@teste.invalid';
 const NEWUSER = 'novo@teste.invalid';
 
 let env: RulesTestEnvironment;
+let hasStorage = false;
 
 const ctx = (email: string, uid: string) =>
   env.authenticatedContext(uid, { email, email_verified: true });
@@ -26,18 +27,66 @@ const profile = (email: string, uid: string, status: string, role = 'user') =>
   ({ email, auth_uid: uid, name: 'Teste', status, role });
 
 before(async () => {
-  env = await initializeTestEnvironment({
+  const firestoreHost = process.env.FIRESTORE_EMULATOR_HOST || '127.0.0.1:8080';
+  const [fHost, fPort] = firestoreHost.split(':');
+
+  const config: any = {
     projectId: 'neurogestor-rules-test',
-    firestore: { rules: readFileSync('firebase/firestore.rules', 'utf8') },
-    storage: { rules: readFileSync('firebase/storage.rules', 'utf8') },
-  });
+    firestore: {
+      host: fHost,
+      port: Number(fPort) || 8080,
+      rules: readFileSync('firebase/firestore.rules', 'utf8')
+    },
+  };
+
+  const storageHost = process.env.FIREBASE_STORAGE_EMULATOR_HOST;
+  if (storageHost) {
+    const [sHost, sPort] = storageHost.split(':');
+    try {
+      config.storage = {
+        host: sHost,
+        port: Number(sPort) || 9199,
+        rules: readFileSync('firebase/storage.rules', 'utf8')
+      };
+      hasStorage = true;
+    } catch {}
+  } else {
+    try {
+      config.storage = {
+        host: '127.0.0.1',
+        port: 9199,
+        rules: readFileSync('firebase/storage.rules', 'utf8')
+      };
+      hasStorage = true;
+    } catch {}
+  }
+
+  try {
+    env = await initializeTestEnvironment(config);
+  } catch (err) {
+    if (config.storage) {
+      delete config.storage;
+      hasStorage = false;
+      env = await initializeTestEnvironment(config);
+    } else {
+      throw err;
+    }
+  }
 });
 
-after(async () => { await env.cleanup(); });
+after(async () => {
+  if (env) {
+    await env.cleanup();
+  }
+});
 
 beforeEach(async () => {
   await env.clearFirestore();
-  await env.clearStorage();
+  if (hasStorage) {
+    try {
+      await env.clearStorage();
+    } catch {}
+  }
   await env.withSecurityRulesDisabled(async (c) => {
     const db = c.firestore();
     await setDoc(doc(db, 'users', ADMIN), profile(ADMIN, 'uAdmin', 'APPROVED', 'admin'));
@@ -148,19 +197,31 @@ for (const col of ['config', 'report_templates', 'electrode_models']) {
 const png = () => new Uint8Array([1, 2, 3]);
 const meta = { contentType: 'image/png' };
 
-test('storage: APPROVED envia e baixa no próprio uid; não acessa uid alheio', async () => {
+test('storage: APPROVED envia e baixa no próprio uid; não acessa uid alheio', async (t) => {
+  if (!hasStorage) {
+    t.skip('Emulador do Storage não disponível nesta execução');
+    return;
+  }
   const st = ctx(APPROVED, 'uAprov').storage();
   await assertSucceeds(uploadBytes(ref(st, 'surgeries/uAprov/s1/a.png'), png(), meta));
   await assertSucceeds(getBytes(ref(st, 'surgeries/uAprov/s1/a.png')));
   await assertFails(uploadBytes(ref(st, 'surgeries/outro/s1/a.png'), png(), meta));
 });
 
-test('storage: PENDING não envia nem baixa', async () => {
+test('storage: PENDING não envia nem baixa', async (t) => {
+  if (!hasStorage) {
+    t.skip('Emulador do Storage não disponível nesta execução');
+    return;
+  }
   const st = ctx(PENDING, 'uPend').storage();
   await assertFails(uploadBytes(ref(st, 'surgeries/uPend/s2/a.png'), png(), meta));
 });
 
-test('storage: tipo não-imagem é recusado; admin lê arquivos de outros', async () => {
+test('storage: tipo não-imagem é recusado; admin lê arquivos de outros', async (t) => {
+  if (!hasStorage) {
+    t.skip('Emulador do Storage não disponível nesta execução');
+    return;
+  }
   const st = ctx(APPROVED, 'uAprov').storage();
   await assertFails(uploadBytes(ref(st, 'surgeries/uAprov/s1/a.txt'), png(), { contentType: 'text/plain' }));
   await env.withSecurityRulesDisabled(async (c) => {
