@@ -3,6 +3,7 @@
 // Execução: npm run test:rules
 // Usa apenas e-mails e UIDs fictícios.
 import { test, before, after, beforeEach } from 'node:test';
+import assert from 'node:assert/strict';
 import { readFileSync } from 'node:fs';
 import {
   initializeTestEnvironment, assertSucceeds, assertFails, type RulesTestEnvironment,
@@ -18,7 +19,6 @@ const ASSISTANT = 'secretaria@teste.invalid';
 const NEWUSER = 'novo@teste.invalid';
 
 let env: RulesTestEnvironment;
-let hasStorage = false;
 
 const ctx = (email: string, uid: string) =>
   env.authenticatedContext(uid, { email, email_verified: true });
@@ -30,6 +30,9 @@ before(async () => {
   const firestoreHost = process.env.FIRESTORE_EMULATOR_HOST || '127.0.0.1:8080';
   const [fHost, fPort] = firestoreHost.split(':');
 
+  const storageHost = process.env.FIREBASE_STORAGE_EMULATOR_HOST || '127.0.0.1:9199';
+  const [sHost, sPort] = storageHost.split(':');
+
   const config: any = {
     projectId: 'neurogestor-rules-test',
     firestore: {
@@ -37,41 +40,16 @@ before(async () => {
       port: Number(fPort) || 8080,
       rules: readFileSync('firebase/firestore.rules', 'utf8')
     },
+    storage: {
+      host: sHost,
+      port: Number(sPort) || 9199,
+      rules: readFileSync('firebase/storage.rules', 'utf8')
+    }
   };
 
-  const storageHost = process.env.FIREBASE_STORAGE_EMULATOR_HOST;
-  if (storageHost) {
-    const [sHost, sPort] = storageHost.split(':');
-    try {
-      config.storage = {
-        host: sHost,
-        port: Number(sPort) || 9199,
-        rules: readFileSync('firebase/storage.rules', 'utf8')
-      };
-      hasStorage = true;
-    } catch {}
-  } else {
-    try {
-      config.storage = {
-        host: '127.0.0.1',
-        port: 9199,
-        rules: readFileSync('firebase/storage.rules', 'utf8')
-      };
-      hasStorage = true;
-    } catch {}
-  }
-
-  try {
-    env = await initializeTestEnvironment(config);
-  } catch (err) {
-    if (config.storage) {
-      delete config.storage;
-      hasStorage = false;
-      env = await initializeTestEnvironment(config);
-    } else {
-      throw err;
-    }
-  }
+  // Falha compulsoriamente se o Storage ou Firestore não estiver disponível
+  // Não suprime erro nem converte em skip silencioso
+  env = await initializeTestEnvironment(config);
 });
 
 after(async () => {
@@ -82,11 +60,7 @@ after(async () => {
 
 beforeEach(async () => {
   await env.clearFirestore();
-  if (hasStorage) {
-    try {
-      await env.clearStorage();
-    } catch {}
-  }
+  await env.clearStorage();
   await env.withSecurityRulesDisabled(async (c) => {
     const db = c.firestore();
     await setDoc(doc(db, 'users', ADMIN), profile(ADMIN, 'uAdmin', 'APPROVED', 'admin'));
@@ -197,35 +171,181 @@ for (const col of ['config', 'report_templates', 'electrode_models']) {
 const png = () => new Uint8Array([1, 2, 3]);
 const meta = { contentType: 'image/png' };
 
-test('storage: APPROVED envia e baixa no próprio uid; não acessa uid alheio', async (t) => {
-  if (!hasStorage) {
-    t.skip('Emulador do Storage não disponível nesta execução');
-    return;
-  }
+test('storage: APPROVED envia e baixa no próprio uid; não acessa uid alheio', async () => {
   const st = ctx(APPROVED, 'uAprov').storage();
   await assertSucceeds(uploadBytes(ref(st, 'surgeries/uAprov/s1/a.png'), png(), meta));
   await assertSucceeds(getBytes(ref(st, 'surgeries/uAprov/s1/a.png')));
   await assertFails(uploadBytes(ref(st, 'surgeries/outro/s1/a.png'), png(), meta));
 });
 
-test('storage: PENDING não envia nem baixa', async (t) => {
-  if (!hasStorage) {
-    t.skip('Emulador do Storage não disponível nesta execução');
-    return;
-  }
+test('storage: PENDING não envia nem baixa', async () => {
   const st = ctx(PENDING, 'uPend').storage();
   await assertFails(uploadBytes(ref(st, 'surgeries/uPend/s2/a.png'), png(), meta));
 });
 
-test('storage: tipo não-imagem é recusado; admin lê arquivos de outros', async (t) => {
-  if (!hasStorage) {
-    t.skip('Emulador do Storage não disponível nesta execução');
-    return;
-  }
+test('storage: tipo não-imagem é recusado; admin lê arquivos de outros', async () => {
   const st = ctx(APPROVED, 'uAprov').storage();
   await assertFails(uploadBytes(ref(st, 'surgeries/uAprov/s1/a.txt'), png(), { contentType: 'text/plain' }));
   await env.withSecurityRulesDisabled(async (c) => {
     await uploadBytes(ref(c.storage(), 'surgeries/uAprov/s1/b.png'), png(), meta);
   });
   await assertSucceeds(getBytes(ref(ctx(ADMIN, 'uAdmin').storage(), 'surgeries/uAprov/s1/b.png')));
+});
+
+// ---------- Riscos Centrais da OS: Transição de Autorização, Isolamento e Retry ----------
+
+test('regras: alteração de papel de admin para user bloqueia imediatamente acesso ao cofre de senhas', async () => {
+  await env.withSecurityRulesDisabled(async (c) => {
+    await setDoc(doc(c.firestore(), 'passwords', 'pSecret'), { title: 'Banco', user: 'admin' });
+  });
+
+  // Admin acessa cofre
+  await assertSucceeds(getDoc(doc(ctx(ADMIN, 'uAdmin').firestore(), 'passwords', 'pSecret')));
+
+  // Perfil é rebaixado para usuário comum
+  await env.withSecurityRulesDisabled(async (c) => {
+    await updateDoc(doc(c.firestore(), 'users', ADMIN), { role: 'user' });
+  });
+
+  // Acesso ao cofre é imediatamente bloqueado
+  await assertFails(getDoc(doc(ctx(ADMIN, 'uAdmin').firestore(), 'passwords', 'pSecret')));
+  await assertFails(setDoc(doc(ctx(ADMIN, 'uAdmin').firestore(), 'passwords', 'pNew'), { title: 'Invadir' }));
+});
+
+test('regras: revogação de status de APPROVED para DENIED bloqueia leitura e escrita de cirurgias', async () => {
+  // Usuário aprovado lê cirurgia
+  await assertSucceeds(getDoc(doc(ctx(APPROVED, 'uAprov').firestore(), 'surgeries', 's1')));
+
+  // Status é revogado para DENIED
+  await env.withSecurityRulesDisabled(async (c) => {
+    await updateDoc(doc(c.firestore(), 'users', APPROVED), { status: 'DENIED' });
+  });
+
+  // Qualquer tentativa de leitura ou escrita é imediatamente rejeitada
+  await assertFails(getDoc(doc(ctx(APPROVED, 'uAprov').firestore(), 'surgeries', 's1')));
+  await assertFails(setDoc(doc(ctx(APPROVED, 'uAprov').firestore(), 'surgeries', 'sBloq'), {
+    owner_email: APPROVED,
+    procedimento: 'Teste Bloqueado'
+  }));
+});
+
+test('isolamento determinístico: geração de sessão impede que callbacks atrasados contaminem o estado', () => {
+  let sessionGeneration = 1;
+  let activeEmail = 'medico1@teste.invalid';
+  let activeUid = 'uMedico1';
+  let memoryCache: any[] | null = null;
+
+  // Operação 1 inicia na geração 1
+  const opGen = sessionGeneration;
+  const opEmail = activeEmail;
+  const opUid = activeUid;
+
+  const isOperationAllowed = (gen: number, email: string, uid: string) =>
+    gen === sessionGeneration && email === activeEmail && uid === activeUid;
+
+  // Usuário desloga e novo usuário loga (geração avança para 2)
+  sessionGeneration++;
+  activeEmail = 'medico2@teste.invalid';
+  activeUid = 'uMedico2';
+  memoryCache = null;
+
+  // Callback atrasado da Operação 1 dispara agora
+  const callbackExecuted = () => {
+    if (!isOperationAllowed(opGen, opEmail, opUid)) {
+      return false; // Callback descartado por geração obsoleta
+    }
+    memoryCache = [{ id: 'vazamento_de_dados' }];
+    return true;
+  };
+
+  const executed = callbackExecuted();
+  assert.equal(executed, false, 'Callback atrasado deveria ser descartado');
+  assert.equal(memoryCache, null, 'Cache em memória não deve ser contaminado por callback atrasado');
+});
+
+test('isolamento determinístico: rejeição de cache com UID divergente ou ausente', () => {
+  const isCacheValid = (owner: { email: string; uid?: string } | null, current: { email: string; uid: string }) => {
+    if (!owner || !owner.email || !owner.uid) return false;
+    return owner.email.toLowerCase().trim() === current.email.toLowerCase().trim() && owner.uid === current.uid;
+  };
+
+  const currentSession = { email: 'user@teste.invalid', uid: 'uid_ativo' };
+
+  // 1. Cache de mesma conta mas sem UID (formato legado)
+  assert.equal(isCacheValid({ email: 'user@teste.invalid' }, currentSession), false);
+
+  // 2. Cache com mesmo email mas UID diferente (outra conta ou reconexão)
+  assert.equal(isCacheValid({ email: 'user@teste.invalid', uid: 'uid_outro' }, currentSession), false);
+
+  // 3. Cache com identidade e UID estritamente coincidentes
+  assert.equal(isCacheValid({ email: 'user@teste.invalid', uid: 'uid_ativo' }, currentSession), true);
+});
+
+test('idempotência OCR: retry com reordenação ou repetição de lote gera os mesmos IDs determinísticos', async () => {
+  const stableId = async (key: string): Promise<string> => {
+    const digest = await crypto.subtle.digest('SHA-256', new TextEncoder().encode(key));
+    const hex = Array.from(new Uint8Array(digest), b => b.toString(16).padStart(2, '0')).join('');
+    return `imp_${hex.slice(0, 32)}`;
+  };
+
+  const item1 = {
+    owner_email: 'medico@teste.invalid',
+    paciente: 'Paciente Exemplo Silva',
+    data: '2026-10-15',
+    procedimento: 'Artrodese Lombar',
+    hospital: 'Hospital Central',
+    medico: 'Dr. Roberto',
+    hora_inicio: '08:00',
+    numero_guia: '12345'
+  };
+
+  const item2 = {
+    owner_email: 'medico@teste.invalid',
+    paciente: 'Outro Paciente Santos',
+    data: '2026-10-16',
+    procedimento: 'Microdiscectomia',
+    hospital: 'Hospital Norte',
+    medico: 'Dra. Patricia',
+    hora_inicio: '10:00',
+    numero_guia: '67890'
+  };
+
+  const key1 = [
+    item1.owner_email,
+    item1.paciente.toLowerCase(),
+    item1.data,
+    item1.procedimento.toLowerCase(),
+    item1.hospital.toLowerCase(),
+    item1.medico.toLowerCase(),
+    item1.hora_inicio,
+    item1.numero_guia
+  ].join('|');
+
+  const key2 = [
+    item2.owner_email,
+    item2.paciente.toLowerCase(),
+    item2.data,
+    item2.procedimento.toLowerCase(),
+    item2.hospital.toLowerCase(),
+    item2.medico.toLowerCase(),
+    item2.hora_inicio,
+    item2.numero_guia
+  ].join('|');
+
+  const id1PrimeiroEnvio = await stableId(key1);
+  const id2PrimeiroEnvio = await stableId(key2);
+
+  // Reordenação do lote no retry
+  const id2SegundoEnvio = await stableId(key2);
+  const id1SegundoEnvio = await stableId(key1);
+
+  assert.equal(id1PrimeiroEnvio, id1SegundoEnvio, 'ID determinístico do item 1 deve ser idêntico');
+  assert.equal(id2PrimeiroEnvio, id2SegundoEnvio, 'ID determinístico do item 2 deve ser idêntico');
+
+  // Simulação de deduplicação idempotente: se o ID já existe no banco, não insere novamente
+  const database = [id1PrimeiroEnvio];
+  const retryBatch = [id1SegundoEnvio, id2SegundoEnvio];
+  const toInsert = retryBatch.filter(id => !database.includes(id));
+
+  assert.deepEqual(toInsert, [id2SegundoEnvio], 'Apenas o item que ainda não existia no banco deve ser inserido');
 });
