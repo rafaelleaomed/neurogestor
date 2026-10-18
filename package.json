@@ -10,8 +10,7 @@
     "dev": "vite",
     "build": "vite build",
     "preview": "vite preview",
-    "test:rules": "firebase emulators:exec --only firestore,storage --project neurogestor-rules-test \"node --no-warnings --experimental-strip-types --test firebase/tests/rules.test.ts\"",
-    "test:rules:firestore": "firebase emulators:exec --only firestore --project neurogestor-rules-test \"node --no-warnings --experimental-strip-types --test firebase/tests/rules.test.ts\""
+    "test:rules": "firebase emulators:exec --only firestore,storage --project neurogestor-rules-test \"node --no-warnings --experimental-strip-types --test firebase/tests/rules.test.ts\""
   },
   "dependencies": {
     "@google/genai": "^1.42.0",

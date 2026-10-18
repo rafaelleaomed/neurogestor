@@ -9,7 +9,7 @@ import {
   signOut,
   type User as FirebaseUser
 } from 'firebase/auth';
-import app from './firebase';
+import app from './firebase.ts';
 
 export const auth = getAuth(app);
 

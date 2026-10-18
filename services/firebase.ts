@@ -3,13 +3,15 @@ import { getFirestore } from 'firebase/firestore';
 import { getStorage } from 'firebase/storage';
 import { getMessaging, isSupported } from 'firebase/messaging';
 
+const metaEnv = (typeof import.meta !== 'undefined' && (import.meta as any).env) || (typeof process !== 'undefined' && process.env) || {};
+
 const firebaseConfig = {
-    apiKey: import.meta.env.VITE_FIREBASE_API_KEY || "",
-    authDomain: import.meta.env.VITE_FIREBASE_AUTH_DOMAIN || "neurogestor-app.firebaseapp.com",
-    projectId: import.meta.env.VITE_FIREBASE_PROJECT_ID || "neurogestor-app",
-    storageBucket: import.meta.env.VITE_FIREBASE_STORAGE_BUCKET || "neurogestor-app.firebasestorage.app",
-    messagingSenderId: import.meta.env.VITE_FIREBASE_MESSAGING_SENDER_ID || "744896910428",
-    appId: import.meta.env.VITE_FIREBASE_APP_ID || "1:744896910428:web:6cbb0c665701d3acc1c299"
+    apiKey: metaEnv.VITE_FIREBASE_API_KEY || "",
+    authDomain: metaEnv.VITE_FIREBASE_AUTH_DOMAIN || "neurogestor-app.firebaseapp.com",
+    projectId: metaEnv.VITE_FIREBASE_PROJECT_ID || "neurogestor-app",
+    storageBucket: metaEnv.VITE_FIREBASE_STORAGE_BUCKET || "neurogestor-app.firebasestorage.app",
+    messagingSenderId: metaEnv.VITE_FIREBASE_MESSAGING_SENDER_ID || "744896910428",
+    appId: metaEnv.VITE_FIREBASE_APP_ID || "1:744896910428:web:6cbb0c665701d3acc1c299"
 };
 
 const app = initializeApp(firebaseConfig);

@@ -1,15 +1,15 @@
 
-import { db } from './firebase';
+import { db } from './firebase.ts';
 import {
   collection, doc, getDocs, setDoc, deleteDoc,
   getDoc, writeBatch, query, where, onSnapshot, Unsubscribe
 } from 'firebase/firestore';
-import { firebaseStorage } from './firebase';
-import { auth } from './auth';
+import { firebaseStorage } from './firebase.ts';
+import { auth } from './auth.ts';
 import { ref, uploadBytes, getDownloadURL } from 'firebase/storage';
-import { Surgery, Category, User, PasswordEntry, ReportTemplate, ElectrodeModel, LearnedCategory } from '../types';
-import { SEED_DOCTORS, SEED_HOSPITALS, isDemoUser, DEMO_USER, isMasterAdmin, isAdminUser } from '../constants';
-import { getDemoMockSurgeries, saveDemoMockSurgery, DEMO_FICTITIOUS_PASSWORDS } from './mockDemoData';
+import { Surgery, Category, User, PasswordEntry, ReportTemplate, ElectrodeModel, LearnedCategory } from '../types.ts';
+import { SEED_DOCTORS, SEED_HOSPITALS, isDemoUser, DEMO_USER, isMasterAdmin, isAdminUser } from '../constants.ts';
+import { getDemoMockSurgeries, saveDemoMockSurgery, DEMO_FICTITIOUS_PASSWORDS } from './mockDemoData.ts';
 
 // ============================================================
 // FIREBASE STORAGE — Upload de imagens
@@ -470,10 +470,51 @@ export const initStorage = async () => {
     usersQuery,
     (snapshot) => {
       if (!isListenerActiveForCurrentSession()) return;
-      usersCache = snapshot.docs.map(d => d.data() as User);
+      const freshUsers = snapshot.docs.map(d => d.data() as User);
+      usersCache = freshUsers;
       syncMemoryCacheOwner();
       if (sessionEmail && sessionUid && isCacheOwnedBy(sessionEmail, sessionUid)) {
         localStorage.setItem(LOCAL_KEYS.USERS, JSON.stringify(usersCache));
+      }
+
+      // Detecta alteração remota de privilégios ou revogação de status da sessão ativa
+      const myProfile = freshUsers.find(u => normalizeEmail(u.email) === sessionEmail);
+      if (myProfile) {
+        const myUid = myProfile.auth_uid || sessionUid;
+        const myStatus = myProfile.status || '';
+        const myRole = myProfile.role || '';
+        const myIsDemo = Boolean(myProfile.is_demo || isDemoUser(myProfile));
+
+        const permissionsChanged =
+          myUid !== sessionUid ||
+          myStatus !== sessionStatus ||
+          myRole !== sessionRole ||
+          myIsDemo !== isDemo;
+
+        if (permissionsChanged) {
+          console.warn('[NeuroGestor] Perfil ou privilégios alterados remotamente. Atualizando sessão...');
+          const currentActive = getSession();
+          if (currentActive && normalizeEmail(currentActive.email) === sessionEmail) {
+            const updatedUser: User = {
+              ...currentActive,
+              ...myProfile,
+              auth_uid: sessionUid
+            };
+            setSession(updatedUser);
+            if (updatedUser.status === 'approved' && !updatedUser.is_demo && !isDemoUser(updatedUser)) {
+              initStorage();
+            }
+          } else {
+            cleanupStorageSession();
+          }
+          return;
+        }
+      } else {
+        // Conta removida remotamente: encerra sessão imediatamente
+        console.warn('[NeuroGestor] Perfil do usuário não localizado remotamente. Encerrando sessão...');
+        cleanupStorageSession();
+        setSession(null);
+        return;
       }
     },
     (error) => {
@@ -486,9 +527,11 @@ export const initStorage = async () => {
     passwordsUnsub = onSnapshot(collection(db, COLLECTIONS.PASSWORDS), (snap) => {
       if (!isListenerActiveForCurrentSession()) return;
       const active = getSession();
-      if (!isPrivilegedUser(active)) {
+      const myCached = usersCache?.find(u => normalizeEmail(u.email) === sessionEmail);
+      if (!isPrivilegedUser(active) || (myCached && !isPrivilegedUser(myCached))) {
         passwordsCache = null;
         listeners.passwords.forEach(cb => cb([]));
+        cleanupStorageSession();
         return;
       }
       passwordsCache = snap.docs.map(d => d.data() as PasswordEntry);
@@ -787,7 +830,6 @@ export const saveSurgeriesBatch = async (newSurgeries: Array<Omit<Surgery, 'id'>
   const userExisting = existing.filter(s => normalizeEmail(s.owner_email) === opEmail);
 
   // Gera chave determinística estável por item, independente da ordem do lote
-  const occurrences = new Map<string, number>();
   const withIds: Surgery[] = [];
   for (const newItem of newSurgeries) {
     const owner = newItem.owner_email || user.email;
@@ -795,24 +837,27 @@ export const saveSurgeriesBatch = async (newSurgeries: Array<Omit<Surgery, 'id'>
     if (!id) {
       const explicitOrigin = (newItem as any).source_id || (newItem as any).origin_key || (newItem as any).file_name;
       const imageOrigin = newItem.label_images?.[0] || newItem.anexo_url || '';
-      const cleanImg = imageOrigin.startsWith('data:') ? imageOrigin.slice(0, 80) : imageOrigin;
-      const baseKey = explicitOrigin
-        ? `${normalizeEmail(owner)}|origin:${explicitOrigin}`
-        : [
-            normalizeEmail(owner),
-            normalize(newItem.paciente),
-            (newItem.data || '').trim(),
-            normalize(newItem.procedimento),
-            normalize(newItem.hospital || ''),
-            normalize(newItem.medico || ''),
-            (newItem.hora_inicio || '').trim(),
-            (newItem.numero_guia || '').trim(),
-            cleanImg ? `img:${cleanImg}` : ''
-          ].filter(Boolean).join('|');
+      let imgHash = '';
+      if (imageOrigin) {
+        const imgDigest = await crypto.subtle.digest('SHA-256', new TextEncoder().encode(imageOrigin));
+        imgHash = Array.from(new Uint8Array(imgDigest), b => b.toString(16).padStart(2, '0')).join('').slice(0, 16);
+      }
 
-      const count = (occurrences.get(baseKey) || 0) + 1;
-      occurrences.set(baseKey, count);
-      id = await stableSurgeryId(count === 1 ? baseKey : `${baseKey}#${count}`);
+      const parts = [
+        normalizeEmail(owner),
+        normalize(newItem.paciente),
+        (newItem.data || '').trim(),
+        normalize(newItem.procedimento)
+      ];
+      if (explicitOrigin) {
+        parts.push(`origin:${explicitOrigin}`);
+      }
+      if (imgHash) {
+        parts.push(`img:${imgHash}`);
+      }
+
+      const baseKey = parts.join('|');
+      id = await stableSurgeryId(baseKey);
     }
     withIds.push({ ...newItem, id, owner_email: owner } as Surgery);
   }
@@ -1454,27 +1499,38 @@ export const updateUserTeam = async (email: string, teamId: string, teamName?: s
 };
 
 export const updateUserFcmToken = async (email: string, token: string) => {
-  const currentSession = getSession();
+  const initialSession = getSession();
+  if (!initialSession?.email || !initialSession.auth_uid) return;
   const opGen = currentSessionGeneration;
-  const opEmail = currentSession?.email ? normalizeEmail(currentSession.email) : '';
-  const opUid = currentSession?.auth_uid;
+  const opEmail = normalizeEmail(initialSession.email);
+  const opUid = initialSession.auth_uid;
   const cleanEmail = email.toLowerCase();
+
+  // Apenas a própria conta da sessão ativa pode atualizar seu FCM Token
+  if (opEmail !== cleanEmail) return;
+
+  try {
+    await setDoc(doc(db, COLLECTIONS.USERS, cleanEmail), { fcmToken: token }, { merge: true });
+  } catch (error) {
+    console.error('[NeuroGestor] Erro ao atualizar FCM Token no Firestore:', error);
+  }
+
+  // Se a sessão foi invalidada ou trocada durante o await, descarta qualquer mutação tardia
+  if (!isSessionActive(opGen, opEmail, opUid)) return;
+
   const users = getUsers();
   const user = users.find(u => u.email.toLowerCase() === cleanEmail);
   if (user) {
     user.fcmToken = token;
-    try {
-      await setDoc(doc(db, COLLECTIONS.USERS, cleanEmail), { fcmToken: token }, { merge: true });
-    } catch (error) {
-      console.error('[NeuroGestor] Erro ao atualizar FCM Token no Firestore:', error);
-    }
-    if (opEmail && opUid && isCacheOwnedBy(opEmail, opUid)) {
+    if (isCacheOwnedBy(opEmail, opUid)) {
       localStorage.setItem(LOCAL_KEYS.USERS, JSON.stringify(users));
     }
+  }
 
-    if (currentSession && normalizeEmail(currentSession.email) === cleanEmail) {
-      setSession({ ...currentSession, fcmToken: token });
-    }
+  // Usa estritamente a sessão ativa atual validada, sem reutilizar referências pré-await
+  const activeSession = getSession();
+  if (activeSession && normalizeEmail(activeSession.email) === cleanEmail && isSessionActive(opGen, opEmail, opUid)) {
+    setSession({ ...activeSession, fcmToken: token });
   }
 };
 
@@ -2042,8 +2098,7 @@ export const saveLearnedCategoryGlobal = async (procedureName: string, category:
   learnedCategoriesCache = current;
   syncMemoryCacheOwner();
 };
-  syncMemoryCacheOwner();
-};
+
 // ============================================================
 // BACKUP (Exportação Completa)
 // ============================================================

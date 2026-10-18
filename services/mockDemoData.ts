@@ -1,4 +1,4 @@
-import { Surgery, PasswordEntry } from '../types';
+import { Surgery, PasswordEntry } from '../types.ts';
 
 /**
  * DADOS TOTALMENTE FICTÍCIOS / SINTÉTICOS PARA O MODO DEMONSTRAÇÃO

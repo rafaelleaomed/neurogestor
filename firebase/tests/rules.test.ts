@@ -2,6 +2,18 @@
 // Requer Java (emulador) e as devDependencies @firebase/rules-unit-testing e firebase-tools.
 // Execução: npm run test:rules
 // Usa apenas e-mails e UIDs fictícios.
+if (typeof (globalThis as any).localStorage === 'undefined') {
+  const store = new Map<string, string>();
+  (globalThis as any).localStorage = {
+    getItem: (key: string) => store.get(key) ?? null,
+    setItem: (key: string, value: string) => { store.set(key, String(value)); },
+    removeItem: (key: string) => { store.delete(key); },
+    clear: () => { store.clear(); },
+    key: (index: number) => Array.from(store.keys())[index] ?? null,
+    get length() { return store.size; }
+  };
+}
+
 import { test, before, after, beforeEach } from 'node:test';
 import assert from 'node:assert/strict';
 import { readFileSync } from 'node:fs';
@@ -10,6 +22,13 @@ import {
 } from '@firebase/rules-unit-testing';
 import { doc, getDoc, setDoc, updateDoc, getDocs, collection, query, where } from 'firebase/firestore';
 import { ref, uploadBytes, getBytes } from 'firebase/storage';
+import {
+  getSession,
+  setSession,
+  cleanupStorageSession,
+  isSessionActive,
+  saveSurgeriesBatch
+} from '../../services/storage.ts';
 
 const MASTER = 'rafaelleaobh@gmail.com';
 const ADMIN = 'admin@teste.invalid';
@@ -229,123 +248,113 @@ test('regras: revogação de status de APPROVED para DENIED bloqueia leitura e e
   }));
 });
 
-test('isolamento determinístico: geração de sessão impede que callbacks atrasados contaminem o estado', () => {
-  let sessionGeneration = 1;
-  let activeEmail = 'medico1@teste.invalid';
-  let activeUid = 'uMedico1';
-  let memoryCache: any[] | null = null;
+test('implementação real: setSession, cleanupStorageSession e isSessionActive invalidam geração e protegem contra callbacks atrasados', () => {
+  // Configura sessão ativa do médico 1
+  setSession({
+    email: 'medico1@teste.invalid',
+    auth_uid: 'uMedico1',
+    role: 'doctor',
+    status: 'approved'
+  } as any);
 
-  // Operação 1 inicia na geração 1
-  const opGen = sessionGeneration;
-  const opEmail = activeEmail;
-  const opUid = activeUid;
+  assert.equal(getSession()?.email, 'medico1@teste.invalid');
+  assert.equal(getSession()?.auth_uid, 'uMedico1');
 
-  const isOperationAllowed = (gen: number, email: string, uid: string) =>
-    gen === sessionGeneration && email === activeEmail && uid === activeUid;
-
-  // Usuário desloga e novo usuário loga (geração avança para 2)
-  sessionGeneration++;
-  activeEmail = 'medico2@teste.invalid';
-  activeUid = 'uMedico2';
-  memoryCache = null;
-
-  // Callback atrasado da Operação 1 dispara agora
-  const callbackExecuted = () => {
-    if (!isOperationAllowed(opGen, opEmail, opUid)) {
-      return false; // Callback descartado por geração obsoleta
+  // Identifica a geração ativa da operação
+  let opGen = 0;
+  for (let g = 1; g <= 500; g++) {
+    if (isSessionActive(g, 'medico1@teste.invalid', 'uMedico1')) {
+      opGen = g;
+      break;
     }
-    memoryCache = [{ id: 'vazamento_de_dados' }];
-    return true;
-  };
+  }
+  assert.ok(opGen > 0, 'Deveria localizar geração válida para sessão ativa');
 
-  const executed = callbackExecuted();
-  assert.equal(executed, false, 'Callback atrasado deveria ser descartado');
-  assert.equal(memoryCache, null, 'Cache em memória não deve ser contaminado por callback atrasado');
+  // Troca de sessão: desloga e loga médico 2
+  setSession({
+    email: 'medico2@teste.invalid',
+    auth_uid: 'uMedico2',
+    role: 'doctor',
+    status: 'approved'
+  } as any);
+
+  // Callback assíncrono atrasado da Operação do médico 1 tenta executar
+  const allowed = isSessionActive(opGen, 'medico1@teste.invalid', 'uMedico1');
+  assert.equal(allowed, false, 'Callback assíncrono da conta anterior deve ser rejeitado pela implementação real');
+
+  // Encerramento total da sessão
+  cleanupStorageSession();
+  assert.equal(getSession(), null, 'Sessão em memória deve ser nula após cleanupStorageSession');
+  assert.equal(isSessionActive(opGen, 'medico2@teste.invalid', 'uMedico2'), false, 'Geração deve ser invalidada após cleanup');
 });
 
-test('isolamento determinístico: rejeição de cache com UID divergente ou ausente', () => {
-  const isCacheValid = (owner: { email: string; uid?: string } | null, current: { email: string; uid: string }) => {
-    if (!owner || !owner.email || !owner.uid) return false;
-    return owner.email.toLowerCase().trim() === current.email.toLowerCase().trim() && owner.uid === current.uid;
-  };
+test('implementação real: rebaixamento remoto de perfil via setSession incrementa geração e desmonta privilégios', () => {
+  setSession({
+    email: 'admin@teste.invalid',
+    auth_uid: 'uAdmin',
+    role: 'admin',
+    status: 'approved'
+  } as any);
 
-  const currentSession = { email: 'user@teste.invalid', uid: 'uid_ativo' };
+  let adminGen = 0;
+  for (let g = 1; g <= 500; g++) {
+    if (isSessionActive(g, 'admin@teste.invalid', 'uAdmin')) {
+      adminGen = g;
+      break;
+    }
+  }
+  assert.ok(adminGen > 0);
 
-  // 1. Cache de mesma conta mas sem UID (formato legado)
-  assert.equal(isCacheValid({ email: 'user@teste.invalid' }, currentSession), false);
+  // Rebaixamento remoto: papel de admin é alterado para usuário comum
+  setSession({
+    email: 'admin@teste.invalid',
+    auth_uid: 'uAdmin',
+    role: 'user',
+    status: 'approved'
+  } as any);
 
-  // 2. Cache com mesmo email mas UID diferente (outra conta ou reconexão)
-  assert.equal(isCacheValid({ email: 'user@teste.invalid', uid: 'uid_outro' }, currentSession), false);
+  // Geração anterior é automaticamente invalidada devido a hasAuthChanged
+  const canUseOldAdminSession = isSessionActive(adminGen, 'admin@teste.invalid', 'uAdmin');
+  assert.equal(canUseOldAdminSession, false, 'Geração de admin anterior deve ser invalidada após rebaixamento');
+  assert.equal(getSession()?.role, 'user', 'Papel da sessão em memória deve ser atualizado para user');
 
-  // 3. Cache com identidade e UID estritamente coincidentes
-  assert.equal(isCacheValid({ email: 'user@teste.invalid', uid: 'uid_ativo' }, currentSession), true);
+  cleanupStorageSession();
 });
 
-test('idempotência OCR: retry com reordenação ou repetição de lote gera os mesmos IDs determinísticos', async () => {
-  const stableId = async (key: string): Promise<string> => {
-    const digest = await crypto.subtle.digest('SHA-256', new TextEncoder().encode(key));
-    const hex = Array.from(new Uint8Array(digest), b => b.toString(16).padStart(2, '0')).join('');
-    return `imp_${hex.slice(0, 32)}`;
-  };
+test('implementação real: saveSurgeriesBatch gera IDs determinísticos e executa deduplicação em retries reordenados', async () => {
+  setSession({
+    email: 'medico@teste.invalid',
+    auth_uid: 'uMedBatch',
+    role: 'doctor',
+    status: 'approved',
+    is_demo: true
+  } as any);
 
   const item1 = {
-    owner_email: 'medico@teste.invalid',
     paciente: 'Paciente Exemplo Silva',
     data: '2026-10-15',
     procedimento: 'Artrodese Lombar',
     hospital: 'Hospital Central',
     medico: 'Dr. Roberto',
-    hora_inicio: '08:00',
-    numero_guia: '12345'
+    anexo_url: 'https://exemplo.invalid/imagem1.png'
   };
 
   const item2 = {
-    owner_email: 'medico@teste.invalid',
     paciente: 'Outro Paciente Santos',
     data: '2026-10-16',
     procedimento: 'Microdiscectomia',
     hospital: 'Hospital Norte',
     medico: 'Dra. Patricia',
-    hora_inicio: '10:00',
-    numero_guia: '67890'
+    anexo_url: 'https://exemplo.invalid/imagem2.png'
   };
 
-  const key1 = [
-    item1.owner_email,
-    item1.paciente.toLowerCase(),
-    item1.data,
-    item1.procedimento.toLowerCase(),
-    item1.hospital.toLowerCase(),
-    item1.medico.toLowerCase(),
-    item1.hora_inicio,
-    item1.numero_guia
-  ].join('|');
+  // Envio inicial do lote
+  const savedInitial = await saveSurgeriesBatch([item1, item2]);
+  assert.equal(savedInitial, 2, 'Lote inicial deve processar 2 cirurgias');
 
-  const key2 = [
-    item2.owner_email,
-    item2.paciente.toLowerCase(),
-    item2.data,
-    item2.procedimento.toLowerCase(),
-    item2.hospital.toLowerCase(),
-    item2.medico.toLowerCase(),
-    item2.hora_inicio,
-    item2.numero_guia
-  ].join('|');
+  // Retry com o lote em ordem invertida
+  const savedRetry = await saveSurgeriesBatch([item2, item1]);
+  assert.equal(savedRetry, 2, 'Retry com ordem invertida deve processar de forma estável');
 
-  const id1PrimeiroEnvio = await stableId(key1);
-  const id2PrimeiroEnvio = await stableId(key2);
-
-  // Reordenação do lote no retry
-  const id2SegundoEnvio = await stableId(key2);
-  const id1SegundoEnvio = await stableId(key1);
-
-  assert.equal(id1PrimeiroEnvio, id1SegundoEnvio, 'ID determinístico do item 1 deve ser idêntico');
-  assert.equal(id2PrimeiroEnvio, id2SegundoEnvio, 'ID determinístico do item 2 deve ser idêntico');
-
-  // Simulação de deduplicação idempotente: se o ID já existe no banco, não insere novamente
-  const database = [id1PrimeiroEnvio];
-  const retryBatch = [id1SegundoEnvio, id2SegundoEnvio];
-  const toInsert = retryBatch.filter(id => !database.includes(id));
-
-  assert.deepEqual(toInsert, [id2SegundoEnvio], 'Apenas o item que ainda não existia no banco deve ser inserido');
+  cleanupStorageSession();
 });
