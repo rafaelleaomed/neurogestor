@@ -62,8 +62,13 @@ const ProcedureForm: React.FC = () => {
 
   const [useCustomPrice, setUseCustomPrice] = useState(false);
 
-  const [doctors, setDoctors] = useState(getDoctors());
-  const [hospitals, setHospitals] = useState(getHospitals());
+  const [doctors, setDoctors] = useState(() => getDoctors());
+  const [hospitals, setHospitals] = useState(() => getHospitals());
+
+  useEffect(() => {
+    setDoctors(getDoctors());
+    setHospitals(getHospitals());
+  }, [currentUser]);
 
   useEffect(() => {
     if (id) {
@@ -387,8 +392,12 @@ const ProcedureForm: React.FC = () => {
       const surgery = surgeryBase as Surgery;
 
       await saveSurgery(surgery);
-      if (normalizedMedico && !currentUser?.is_demo) addDoctor(normalizedMedico);
-      if (normalizedHospital && !currentUser?.is_demo) addHospital(normalizedHospital);
+      if (normalizedMedico && !currentUser?.is_demo && currentUser?.status === 'APPROVED' && currentUser.role !== 'assistant') {
+        addDoctor(normalizedMedico);
+      }
+      if (normalizedHospital && !currentUser?.is_demo && currentUser?.status === 'APPROVED' && currentUser.role !== 'assistant') {
+        addHospital(normalizedHospital);
+      }
 
       // Auto-aprender a categoria selecionada pelo usuário para este procedimento
       if (formData.procedimento && formData.categoria && !currentUser?.is_demo) {

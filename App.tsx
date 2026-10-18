@@ -38,6 +38,7 @@ const App: React.FC = () => {
       if (!firebaseUser) {
         const isDemoEntry = window.location.hash.includes('/demo') || window.location.search.includes('demo=true');
         if (isDemoEntry) {
+          cleanupStorageSession();
           setSession(DEMO_USER);
           setUser(DEMO_USER);
           setAuthReady(true);
@@ -142,6 +143,7 @@ const App: React.FC = () => {
   };
 
   const handleDemoLogin = () => {
+    cleanupStorageSession();
     setAuthError(null);
     setSession(DEMO_USER);
     setUser(DEMO_USER);

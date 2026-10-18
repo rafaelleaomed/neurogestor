@@ -47,17 +47,39 @@ export const DocumentsTab: React.FC<{ isDarkMode: boolean; currentUser?: User | 
     const [showElecForm, setShowElecForm] = useState(false);
 
     useEffect(() => {
-        if (isDemo || !isCamarinhaMember) {
+        if (isDemo) {
             setPasswords([]);
-            const unsubR = subscribeToReports(setReports);
-            const unsubE = subscribeToElectrodes(setElectrodes);
-            return () => { unsubR(); unsubE(); };
+            setReports([]);
+            setElectrodes([]);
+            return;
         }
-        const unsubP = subscribeToPasswords(setPasswords);
-        const unsubR = subscribeToReports(setReports);
-        const unsubE = subscribeToElectrodes(setElectrodes);
-        return () => { unsubP(); unsubR(); unsubE(); };
-    }, [isDemo, isCamarinhaMember]);
+
+        const isPrivileged = currentUser?.status === 'APPROVED' && (currentUser?.role === 'admin' || currentUser?.role === 'owner' || (currentUser?.email && isAdminUser(currentUser.email)));
+        const canReadRef = isPrivileged || (currentUser?.status === 'APPROVED' && currentUser?.role !== 'assistant');
+
+        let unsubP = () => {};
+        if (isPrivileged || isCamarinhaMember) {
+            unsubP = subscribeToPasswords(setPasswords);
+        } else {
+            setPasswords([]);
+        }
+
+        let unsubR = () => {};
+        let unsubE = () => {};
+        if (canReadRef) {
+            unsubR = subscribeToReports(setReports);
+            unsubE = subscribeToElectrodes(setElectrodes);
+        } else {
+            setReports([]);
+            setElectrodes([]);
+        }
+
+        return () => {
+            unsubP();
+            unsubR();
+            unsubE();
+        };
+    }, [isDemo, isCamarinhaMember, currentUser]);
 
     const handleSavePassword = async () => {
         if (isDemo) {

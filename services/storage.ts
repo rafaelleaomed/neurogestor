@@ -79,8 +79,14 @@ const LOCAL_KEYS = {
 
 const normalizeEmail = (email?: string | null) => (email || '').toLowerCase().trim();
 
-const isPrivilegedUser = (u: User) =>
-  isMasterAdmin(u.email) || isAdminUser(u.email) || u.role === 'owner' || u.role === 'admin';
+export const isPrivilegedUser = (u?: User | null) =>
+  Boolean(u && u.status === 'APPROVED' && (isMasterAdmin(u.email) || isAdminUser(u.email) || u.role === 'owner' || u.role === 'admin'));
+
+export const canAccessReferenceData = (u?: User | null) => {
+  if (!u) return false;
+  if (isPrivilegedUser(u)) return true;
+  return u.status === 'APPROVED' && u.role !== 'assistant';
+};
 
 // O cache do localStorage só vale para a identidade que o gravou (evita vazamento entre contas no mesmo navegador).
 const isCacheOwnedBy = (email?: string | null) => {
@@ -96,6 +102,8 @@ const clearLocalCaches = () => {
   try {
     localStorage.removeItem(LOCAL_KEYS.SURGERIES);
     localStorage.removeItem(LOCAL_KEYS.USERS);
+    localStorage.removeItem(LOCAL_KEYS.DOCTORS);
+    localStorage.removeItem(LOCAL_KEYS.HOSPITALS);
     localStorage.removeItem(LOCAL_KEYS.PASSWORDS);
     localStorage.removeItem(LOCAL_KEYS.REPORT_TEMPLATES);
     localStorage.removeItem(LOCAL_KEYS.ELECTRODE_MODELS);
@@ -109,6 +117,7 @@ const clearLocalCaches = () => {
 // ============================================================
 let surgeriesCache: Surgery[] | null = null;
 let usersCache: User[] | null = null;
+let usersCacheOwner: { email: string; uid?: string } | null = null;
 let surgeriesUnsub: Unsubscribe | null = null;
 let usersUnsub: Unsubscribe | null = null;
 let passwordsCache: PasswordEntry[] | null = null;
@@ -121,6 +130,18 @@ let learnedCategoriesUnsub: Unsubscribe | null = null;
 let learnedCategoriesCache: Record<string, Category> | null = null;
 let currentListenerEmail: string | null = null;
 let sessionMemory: User | null = null;
+
+const syncUsersCacheOwner = () => {
+  const session = getSession();
+  if (session?.email) {
+    usersCacheOwner = {
+      email: normalizeEmail(session.email),
+      uid: session.auth_uid
+    };
+  } else {
+    usersCacheOwner = null;
+  }
+};
 
 /**
  * Encerra todas as conexões em tempo real e limpa os dados em memória/disco
@@ -153,6 +174,7 @@ export const cleanupStorageSession = () => {
   }
   surgeriesCache = null;
   usersCache = null;
+  usersCacheOwner = null;
   passwordsCache = null;
   reportTemplatesCache = null;
   electrodeModelsCache = null;
@@ -178,7 +200,7 @@ export const subscribeToPasswords = (cb: DataCallback<PasswordEntry>) => {
     cb(DEMO_FICTITIOUS_PASSWORDS);
     return () => {};
   }
-  if (!user || !(isAdminUser(user.email) || user.role === 'admin' || user.role === 'owner')) {
+  if (!user || !isPrivilegedUser(user)) {
     cb([]);
     return () => {};
   }
@@ -188,12 +210,30 @@ export const subscribeToPasswords = (cb: DataCallback<PasswordEntry>) => {
 };
 
 export const subscribeToReports = (cb: DataCallback<ReportTemplate>) => {
+  const user = getSession();
+  if (user && (user.is_demo || isDemoUser(user))) {
+    cb([]);
+    return () => {};
+  }
+  if (!user || !canAccessReferenceData(user)) {
+    cb([]);
+    return () => {};
+  }
   listeners.reports.push(cb);
   if (reportTemplatesCache) cb(reportTemplatesCache);
   return () => { listeners.reports = listeners.reports.filter(l => l !== cb); };
 };
 
 export const subscribeToElectrodes = (cb: DataCallback<ElectrodeModel>) => {
+  const user = getSession();
+  if (user && (user.is_demo || isDemoUser(user))) {
+    cb([]);
+    return () => {};
+  }
+  if (!user || !canAccessReferenceData(user)) {
+    cb([]);
+    return () => {};
+  }
   listeners.electrodes.push(cb);
   if (electrodeModelsCache) cb(electrodeModelsCache);
   return () => { listeners.electrodes = listeners.electrodes.filter(l => l !== cb); };
@@ -233,15 +273,10 @@ export const initStorage = async () => {
   if (surgeriesUnsub) return;
   currentListenerEmail = sessionEmail;
 
-  const isOwnerOrAdmin = currentSession && (
-    isMasterAdmin(currentSession.email) ||
-    isAdminUser(currentSession.email) ||
-    currentSession.role === 'owner' ||
-    currentSession.role === 'admin'
-  );
+  const isOwnerOrAdmin = isPrivilegedUser(currentSession);
 
   // Consulta do Firestore com isolamento estrito:
-  // Se for Master Admin / Admin / Owner: escuta coleção inteira para gestão da equipe
+  // Se for Master Admin / Admin / Owner (aprovado): escuta coleção inteira para gestão da equipe
   // O papel 'assistant' NÃO entra aqui: as regras do Firestore só liberam as próprias cirurgias para ele
   // Se for médico / usuário comum: escuta ESTRITAMENTE as cirurgias onde owner_email == seu email
   const surgeriesQuery = (isOwnerOrAdmin || !sessionEmail)
@@ -255,7 +290,9 @@ export const initStorage = async () => {
       surgeriesCache = snapshot.docs.map(d => ({ id: d.id, ...d.data() } as Surgery));
       // Atualiza localStorage como cache offline (silencioso se falhar por falta de espaço)
       try {
-        localStorage.setItem(LOCAL_KEYS.SURGERIES, JSON.stringify(surgeriesCache));
+        if (sessionEmail && isCacheOwnedBy(sessionEmail)) {
+          localStorage.setItem(LOCAL_KEYS.SURGERIES, JSON.stringify(surgeriesCache));
+        }
       } catch (e) {
         if (e instanceof DOMException && e.name === 'QuotaExceededError') {
           console.warn('[NeuroGestor] LocalStorage cheio. Usando apenas Firestore para cirurgias.');
@@ -276,14 +313,17 @@ export const initStorage = async () => {
     usersQuery,
     (snapshot) => {
       usersCache = snapshot.docs.map(d => d.data() as User);
-      localStorage.setItem(LOCAL_KEYS.USERS, JSON.stringify(usersCache));
+      usersCacheOwner = sessionEmail ? { email: sessionEmail, uid: currentSession?.auth_uid } : null;
+      if (sessionEmail && isCacheOwnedBy(sessionEmail)) {
+        localStorage.setItem(LOCAL_KEYS.USERS, JSON.stringify(usersCache));
+      }
     },
     (error) => {
       console.warn('[NeuroGestor] Firestore users listener error:', error);
     }
   );
 
-  // listeners de documentos e senhas
+  // listeners de documentos e senhas: não iniciar em coleções negadas
   if (isOwnerOrAdmin) {
     passwordsUnsub = onSnapshot(collection(db, COLLECTIONS.PASSWORDS), (snap) => {
       // Credential records are intentionally kept in memory only.
@@ -294,21 +334,27 @@ export const initStorage = async () => {
     });
   }
 
-  reportTemplatesUnsub = onSnapshot(collection(db, COLLECTIONS.REPORT_TEMPLATES), (snap) => {
-    reportTemplatesCache = snap.docs.map(d => d.data() as ReportTemplate);
-    localStorage.setItem(LOCAL_KEYS.REPORT_TEMPLATES, JSON.stringify(reportTemplatesCache));
-    listeners.reports.forEach(cb => cb(reportTemplatesCache!));
-  }, (error) => {
-    console.warn('[NeuroGestor] Modelos de relatório indisponíveis para este perfil:', error.code);
-  });
+  if (canAccessReferenceData(currentSession)) {
+    reportTemplatesUnsub = onSnapshot(collection(db, COLLECTIONS.REPORT_TEMPLATES), (snap) => {
+      reportTemplatesCache = snap.docs.map(d => d.data() as ReportTemplate);
+      if (sessionEmail && isCacheOwnedBy(sessionEmail)) {
+        localStorage.setItem(LOCAL_KEYS.REPORT_TEMPLATES, JSON.stringify(reportTemplatesCache));
+      }
+      listeners.reports.forEach(cb => cb(reportTemplatesCache!));
+    }, (error) => {
+      console.warn('[NeuroGestor] Modelos de relatório indisponíveis para este perfil:', error.code);
+    });
 
-  electrodeModelsUnsub = onSnapshot(collection(db, COLLECTIONS.ELECTRODE_MODELS), (snap) => {
-    electrodeModelsCache = snap.docs.map(d => d.data() as ElectrodeModel);
-    localStorage.setItem(LOCAL_KEYS.ELECTRODE_MODELS, JSON.stringify(electrodeModelsCache));
-    listeners.electrodes.forEach(cb => cb(electrodeModelsCache!));
-  }, (error) => {
-    console.warn('[NeuroGestor] Modelos de eletrodo indisponíveis para este perfil:', error.code);
-  });
+    electrodeModelsUnsub = onSnapshot(collection(db, COLLECTIONS.ELECTRODE_MODELS), (snap) => {
+      electrodeModelsCache = snap.docs.map(d => d.data() as ElectrodeModel);
+      if (sessionEmail && isCacheOwnedBy(sessionEmail)) {
+        localStorage.setItem(LOCAL_KEYS.ELECTRODE_MODELS, JSON.stringify(electrodeModelsCache));
+      }
+      listeners.electrodes.forEach(cb => cb(electrodeModelsCache!));
+    }, (error) => {
+      console.warn('[NeuroGestor] Modelos de eletrodo indisponíveis para este perfil:', error.code);
+    });
+  }
 
   // Listener de categorias aprendidas
   learnedCategoriesUnsub = onSnapshot(collection(db, COLLECTIONS.LEARNED_CATEGORIES), (snap) => {
@@ -395,11 +441,11 @@ const migrateLocalToFirestore = async (sessionEmail: string | null, isOwnerOrAdm
     }
 
     // Migrar médicos e hospitais para config
-    const localDoctors = isOwnerOrAdmin ? localStorage.getItem(LOCAL_KEYS.DOCTORS) : null;
+    const localDoctors = isOwnerOrAdmin && isCacheOwnedBy(sessionEmail) ? localStorage.getItem(LOCAL_KEYS.DOCTORS) : null;
     if (localDoctors) {
       await setDoc(doc(db, COLLECTIONS.CONFIG, 'doctors'), { list: JSON.parse(localDoctors) }, { merge: true });
     }
-    const localHospitals = isOwnerOrAdmin ? localStorage.getItem(LOCAL_KEYS.HOSPITALS) : null;
+    const localHospitals = isOwnerOrAdmin && isCacheOwnedBy(sessionEmail) ? localStorage.getItem(LOCAL_KEYS.HOSPITALS) : null;
     if (localHospitals) {
       await setDoc(doc(db, COLLECTIONS.CONFIG, 'hospitals'), { list: JSON.parse(localHospitals) }, { merge: true });
     }
@@ -506,12 +552,12 @@ const stableSurgeryId = async (key: string): Promise<string> => {
   return `imp_${hex.slice(0, 32)}`;
 };
 
-export const saveSurgeriesBatch = async (newSurgeries: Surgery[]): Promise<number> => {
+export const saveSurgeriesBatch = async (newSurgeries: Array<Omit<Surgery, 'id'> & { id?: string }>): Promise<number> => {
   if (!newSurgeries || newSurgeries.length === 0) return 0;
 
   const user = getSession();
   if (user && (user.is_demo || isDemoUser(user))) {
-    newSurgeries.forEach(s => saveDemoMockSurgery(s));
+    newSurgeries.forEach(s => saveDemoMockSurgery(s as Surgery));
     return newSurgeries.length;
   }
   if (!user) throw new Error('Sessão de autenticação ausente.');
@@ -533,7 +579,7 @@ export const saveSurgeriesBatch = async (newSurgeries: Surgery[]): Promise<numbe
   const withIds: Surgery[] = [];
   for (const newItem of newSurgeries) {
     const owner = newItem.owner_email || user.email;
-    let id = newItem.id;
+    let id = newItem.id?.trim();
     if (!id) {
       const key = [owner, normalize(newItem.paciente), (newItem.data || '').trim(), normalize(newItem.procedimento)]
         .map(p => normalizeEmail(p)).join('|');
@@ -541,7 +587,7 @@ export const saveSurgeriesBatch = async (newSurgeries: Surgery[]): Promise<numbe
       occurrences.set(key, n);
       id = await stableSurgeryId(`${key}#${n}`);
     }
-    withIds.push({ ...newItem, id, owner_email: owner });
+    withIds.push({ ...newItem, id, owner_email: owner } as Surgery);
   }
 
   withIds.forEach(itemWithId => {
@@ -911,18 +957,37 @@ export const getUsers = (): User[] => {
   if (user && (user.is_demo || isDemoUser(user))) {
     return [DEMO_USER];
   }
-  if (usersCache !== null && usersCache.length > 0) {
-    return [...usersCache];
+  if (!user) return [];
+
+  const currentEmail = normalizeEmail(user.email);
+  const currentUid = user.auth_uid;
+
+  const scopeUsers = (items: User[]): User[] => {
+    if (isPrivilegedUser(user)) {
+      return [...items];
+    }
+    return items.filter(u => normalizeEmail(u.email) === currentEmail);
+  };
+
+  if (usersCache !== null) {
+    const isOwnerMatch = usersCacheOwner &&
+      usersCacheOwner.email === currentEmail &&
+      (!currentUid || !usersCacheOwner.uid || usersCacheOwner.uid === currentUid);
+
+    if (isOwnerMatch) {
+      return scopeUsers(usersCache);
+    }
+    usersCache = null;
+    usersCacheOwner = null;
   }
-  if (!user || !isCacheOwnedBy(user.email)) return [];
+
+  if (!isCacheOwnedBy(user.email)) return [];
   const data = localStorage.getItem(LOCAL_KEYS.USERS);
   if (!data) return [];
   try {
     const parsed = JSON.parse(data);
     if (!Array.isArray(parsed)) return [];
-    return isPrivilegedUser(user)
-      ? [...parsed]
-      : parsed.filter((u: User) => normalizeEmail(u.email) === normalizeEmail(user.email));
+    return scopeUsers(parsed);
   } catch {
     localStorage.removeItem(LOCAL_KEYS.USERS);
     return [];
@@ -952,6 +1017,7 @@ export const saveUser = async (user: User) => {
   }
 
   usersCache = users.map(u => ({ ...u }));
+  syncUsersCacheOwner();
 
   try {
     localStorage.setItem(LOCAL_KEYS.USERS, JSON.stringify(users));
@@ -1004,6 +1070,7 @@ export const updateUserStatus = async (email: string, status: 'APPROVED' | 'DENI
   if (index >= 0) {
     users[index] = { ...users[index], status };
     usersCache = users.map(u => ({ ...u }));
+    syncUsersCacheOwner();
     localStorage.setItem(LOCAL_KEYS.USERS, JSON.stringify(users));
 
     const session = getSession();
@@ -1026,6 +1093,7 @@ export const updateUserRole = async (email: string, role: User['role']) => {
   if (index >= 0) {
     users[index] = { ...users[index], role };
     usersCache = users.map(u => ({ ...u }));
+    syncUsersCacheOwner();
     localStorage.setItem(LOCAL_KEYS.USERS, JSON.stringify(users));
 
     const session = getSession();
@@ -1061,6 +1129,7 @@ export const updateUserTeam = async (email: string, teamId: string, teamName?: s
 
   // Força atualização da referência de cache na memória
   usersCache = users.map(u => ({ ...u }));
+  syncUsersCacheOwner();
 
   try {
     localStorage.setItem(LOCAL_KEYS.USERS, JSON.stringify(users));
@@ -1119,6 +1188,27 @@ export const deleteUser = async (email: string) => {
   const users = getUsers();
   const filtered = users.filter(u => u.email.toLowerCase() !== cleanEmail);
   usersCache = filtered.map(u => ({ ...u }));
+  syncUsersCacheOwner();
+  localStorage.setItem(LOCAL_KEYS.USERS, JSON.stringify(filtered));
+};
+
+    const session = getSession();
+    if (session && session.email.toLowerCase() === cleanEmail) {
+      setSession({ ...session, fcmToken: token });
+    }
+  }
+};
+
+export const deleteUser = async (email: string) => {
+  const cleanEmail = email.toLowerCase();
+  try {
+    await deleteDoc(doc(db, COLLECTIONS.USERS, cleanEmail));
+  } catch (error) {
+    console.error('[NeuroGestor] Erro ao deletar usuário do Firestore:', error);
+  }
+  const users = getUsers();
+  const filtered = users.filter(u => u.email.toLowerCase() !== cleanEmail);
+  usersCache = filtered.map(u => ({ ...u }));
   localStorage.setItem(LOCAL_KEYS.USERS, JSON.stringify(filtered));
 };
 
@@ -1150,34 +1240,76 @@ export const getDoctors = (): string[] => {
   return Array.from(new Set([...SEED_DOCTORS, ...stored])).sort();
 };
 
+export const getDoctors = (): string[] => {
+  const user = getSession();
+  if (user && (user.is_demo || isDemoUser(user))) {
+    return [...SEED_DOCTORS].sort();
+  }
+  if (!user || !canAccessReferenceData(user) || !isCacheOwnedBy(user.email)) {
+    return [...SEED_DOCTORS].sort();
+  }
+  const data = localStorage.getItem(LOCAL_KEYS.DOCTORS);
+  try {
+    const stored: string[] = data ? JSON.parse(data) : [];
+    return Array.from(new Set([...SEED_DOCTORS, ...(Array.isArray(stored) ? stored : [])])).sort();
+  } catch {
+    localStorage.removeItem(LOCAL_KEYS.DOCTORS);
+    return [...SEED_DOCTORS].sort();
+  }
+};
+
 export const addDoctor = async (name: string) => {
+  const user = getSession();
+  if (!user || user.is_demo || isDemoUser(user) || !canAccessReferenceData(user)) return;
   const doctors = getDoctors();
   if (!doctors.includes(name)) {
     doctors.push(name);
-    localStorage.setItem(LOCAL_KEYS.DOCTORS, JSON.stringify(doctors));
-    try {
-      await setDoc(doc(db, COLLECTIONS.CONFIG, 'doctors'), { list: doctors }, { merge: true });
-    } catch (error) {
-      console.error('[NeuroGestor] Erro ao salvar médico no Firestore:', error);
+    if (isCacheOwnedBy(user.email)) {
+      localStorage.setItem(LOCAL_KEYS.DOCTORS, JSON.stringify(doctors));
+    }
+    if (isPrivilegedUser(user)) {
+      try {
+        await setDoc(doc(db, COLLECTIONS.CONFIG, 'doctors'), { list: doctors }, { merge: true });
+      } catch (error) {
+        console.error('[NeuroGestor] Erro ao salvar médico no Firestore:', error);
+      }
     }
   }
 };
 
 export const getHospitals = (): string[] => {
+  const user = getSession();
+  if (user && (user.is_demo || isDemoUser(user))) {
+    return [...SEED_HOSPITALS].sort();
+  }
+  if (!user || !canAccessReferenceData(user) || !isCacheOwnedBy(user.email)) {
+    return [...SEED_HOSPITALS].sort();
+  }
   const data = localStorage.getItem(LOCAL_KEYS.HOSPITALS);
-  const stored: string[] = data ? JSON.parse(data) : [];
-  return Array.from(new Set([...SEED_HOSPITALS, ...stored])).sort();
+  try {
+    const stored: string[] = data ? JSON.parse(data) : [];
+    return Array.from(new Set([...SEED_HOSPITALS, ...(Array.isArray(stored) ? stored : [])])).sort();
+  } catch {
+    localStorage.removeItem(LOCAL_KEYS.HOSPITALS);
+    return [...SEED_HOSPITALS].sort();
+  }
 };
 
 export const addHospital = async (name: string) => {
+  const user = getSession();
+  if (!user || user.is_demo || isDemoUser(user) || !canAccessReferenceData(user)) return;
   const hospitals = getHospitals();
   if (!hospitals.includes(name)) {
     hospitals.push(name);
-    localStorage.setItem(LOCAL_KEYS.HOSPITALS, JSON.stringify(hospitals));
-    try {
-      await setDoc(doc(db, COLLECTIONS.CONFIG, 'hospitals'), { list: hospitals }, { merge: true });
-    } catch (error) {
-      console.error('[NeuroGestor] Erro ao salvar hospital no Firestore:', error);
+    if (isCacheOwnedBy(user.email)) {
+      localStorage.setItem(LOCAL_KEYS.HOSPITALS, JSON.stringify(hospitals));
+    }
+    if (isPrivilegedUser(user)) {
+      try {
+        await setDoc(doc(db, COLLECTIONS.CONFIG, 'hospitals'), { list: hospitals }, { merge: true });
+      } catch (error) {
+        console.error('[NeuroGestor] Erro ao salvar hospital no Firestore:', error);
+      }
     }
   }
 };
@@ -1191,7 +1323,8 @@ export const getPasswords = (): PasswordEntry[] => {
   if (user && (user.is_demo || isDemoUser(user))) {
     return DEMO_FICTITIOUS_PASSWORDS;
   }
-  if (passwordsCache) return passwordsCache;
+  if (!user || !isPrivilegedUser(user)) return [];
+  if (passwordsCache) return [...passwordsCache];
   return [];
 };
 
@@ -1201,7 +1334,7 @@ export const savePassword = async (pw: PasswordEntry) => {
     console.warn('[NeuroGestor] Salvar senha bloqueado em modo demonstração.');
     return;
   }
-  if (!user || !(isAdminUser(user.email) || user.role === 'admin' || user.role === 'owner')) {
+  if (!user || !isPrivilegedUser(user)) {
     throw new Error('Acesso não autorizado ao cofre de credenciais.');
   }
   await setDoc(doc(db, COLLECTIONS.PASSWORDS, pw.id), pw);
@@ -1213,41 +1346,97 @@ export const deletePassword = async (id: string) => {
     console.warn('[NeuroGestor] Excluir senha bloqueado em modo demonstração.');
     return;
   }
-  if (!user || !(isAdminUser(user.email) || user.role === 'admin' || user.role === 'owner')) {
+  if (!user || !isPrivilegedUser(user)) {
     throw new Error('Acesso não autorizado ao cofre de credenciais.');
   }
   await deleteDoc(doc(db, COLLECTIONS.PASSWORDS, id));
 };
 
 export const getReportTemplates = (): ReportTemplate[] => {
-  if (reportTemplatesCache) return reportTemplatesCache;
+  const user = getSession();
+  if (user && (user.is_demo || isDemoUser(user))) {
+    return [];
+  }
+  if (!user || !canAccessReferenceData(user)) {
+    return [];
+  }
+  if (reportTemplatesCache) return [...reportTemplatesCache];
+  if (!isCacheOwnedBy(user.email)) return [];
   const data = localStorage.getItem(LOCAL_KEYS.REPORT_TEMPLATES);
-  return data ? JSON.parse(data) : [];
+  try {
+    const parsed = data ? JSON.parse(data) : [];
+    return Array.isArray(parsed) ? parsed : [];
+  } catch {
+    localStorage.removeItem(LOCAL_KEYS.REPORT_TEMPLATES);
+    return [];
+  }
 };
 
 export const saveReportTemplates = async (templates: ReportTemplate[]) => {
+  const user = getSession();
+  if (user && (user.is_demo || isDemoUser(user))) {
+    return;
+  }
+  if (!user || !isPrivilegedUser(user)) {
+    throw new Error('Apenas administradores podem salvar modelos de relatório.');
+  }
   for (const t of templates) {
     await setDoc(doc(db, COLLECTIONS.REPORT_TEMPLATES, t.id), t);
   }
 };
 
 export const deleteReportTemplate = async (id: string) => {
+  const user = getSession();
+  if (user && (user.is_demo || isDemoUser(user))) {
+    return;
+  }
+  if (!user || !isPrivilegedUser(user)) {
+    throw new Error('Apenas administradores podem excluir modelos de relatório.');
+  }
   await deleteDoc(doc(db, COLLECTIONS.REPORT_TEMPLATES, id));
 };
 
 export const getElectrodeModels = (): ElectrodeModel[] => {
-  if (electrodeModelsCache) return electrodeModelsCache;
+  const user = getSession();
+  if (user && (user.is_demo || isDemoUser(user))) {
+    return [];
+  }
+  if (!user || !canAccessReferenceData(user)) {
+    return [];
+  }
+  if (electrodeModelsCache) return [...electrodeModelsCache];
+  if (!isCacheOwnedBy(user.email)) return [];
   const data = localStorage.getItem(LOCAL_KEYS.ELECTRODE_MODELS);
-  return data ? JSON.parse(data) : [];
+  try {
+    const parsed = data ? JSON.parse(data) : [];
+    return Array.isArray(parsed) ? parsed : [];
+  } catch {
+    localStorage.removeItem(LOCAL_KEYS.ELECTRODE_MODELS);
+    return [];
+  }
 };
 
 export const saveElectrodeModels = async (models: ElectrodeModel[]) => {
+  const user = getSession();
+  if (user && (user.is_demo || isDemoUser(user))) {
+    return;
+  }
+  if (!user || !isPrivilegedUser(user)) {
+    throw new Error('Apenas administradores podem salvar modelos de eletrodo.');
+  }
   for (const m of models) {
     await setDoc(doc(db, COLLECTIONS.ELECTRODE_MODELS, m.id), m);
   }
 };
 
 export const deleteElectrodeModel = async (id: string) => {
+  const user = getSession();
+  if (user && (user.is_demo || isDemoUser(user))) {
+    return;
+  }
+  if (!user || !isPrivilegedUser(user)) {
+    throw new Error('Apenas administradores podem excluir modelos de eletrodo.');
+  }
   await deleteDoc(doc(db, COLLECTIONS.ELECTRODE_MODELS, id));
 };
 
@@ -1299,6 +1488,11 @@ export const getEntityClusters = (type: 'medico' | 'hospital'): Record<string, s
  * Suporta > 500 registros via múltiplos batches
  */
 export const mergeEntities = async (type: 'medico' | 'hospital', canonicalName: string, namesToReplace: string[]): Promise<number> => {
+  const user = getSession();
+  if (!user || !isPrivilegedUser(user)) {
+    throw new Error('Ação permitida apenas para administradores.');
+  }
+
   const surgeries = getSurgeries();
   const toUpdate: Surgery[] = [];
 
@@ -1327,12 +1521,16 @@ export const mergeEntities = async (type: 'medico' | 'hospital', canonicalName: 
   if (type === 'medico') {
     const doctors = getDoctors().filter(d => !namesToReplace.includes(d));
     if (!doctors.includes(canonicalName)) doctors.push(canonicalName);
-    localStorage.setItem(LOCAL_KEYS.DOCTORS, JSON.stringify(doctors));
+    if (isCacheOwnedBy(user.email)) {
+      localStorage.setItem(LOCAL_KEYS.DOCTORS, JSON.stringify(doctors));
+    }
     await setDoc(doc(db, COLLECTIONS.CONFIG, 'doctors'), { list: doctors }, { merge: true });
   } else {
     const hospitals = getHospitals().filter(h => !namesToReplace.includes(h));
     if (!hospitals.includes(canonicalName)) hospitals.push(canonicalName);
-    localStorage.setItem(LOCAL_KEYS.HOSPITALS, JSON.stringify(hospitals));
+    if (isCacheOwnedBy(user.email)) {
+      localStorage.setItem(LOCAL_KEYS.HOSPITALS, JSON.stringify(hospitals));
+    }
     await setDoc(doc(db, COLLECTIONS.CONFIG, 'hospitals'), { list: hospitals }, { merge: true });
   }
 
