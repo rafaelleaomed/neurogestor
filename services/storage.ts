@@ -212,7 +212,8 @@ export const initStorage = async () => {
   );
 
   // Consulta do Firestore com isolamento estrito:
-  // Se for Master Admin / Admin / Assistente: escuta coleção inteira para gestão da equipe
+  // Se for Master Admin / Admin / Owner: escuta coleção inteira para gestão da equipe
+  // O papel 'assistant' NÃO entra aqui: as regras do Firestore só liberam as próprias cirurgias para ele
   // Se for médico / usuário comum: escuta ESTRITAMENTE as cirurgias onde owner_email == seu email
   const surgeriesQuery = (isOwnerOrAdmin || !sessionEmail)
     ? collection(db, COLLECTIONS.SURGERIES)
@@ -517,8 +518,9 @@ export const saveSurgeriesBatch = async (newSurgeries: Surgery[]): Promise<numbe
   }
 
   // Salva no Firestore em lotes seguros
+  const batchSize = 400;
+  let committed = 0;
   try {
-    const batchSize = 400;
     for (let i = 0; i < toAdd.length; i += batchSize) {
       const batch = writeBatch(db);
       const chunk = toAdd.slice(i, i + batchSize);
@@ -530,10 +532,23 @@ export const saveSurgeriesBatch = async (newSurgeries: Surgery[]): Promise<numbe
         batch.set(doc(db, COLLECTIONS.SURGERIES, s.id), surgeryWithOwner);
       });
       await batch.commit();
+      committed += chunk.length;
     }
   } catch (error) {
     console.error('[NeuroGestor] Erro ao salvar batch no Firestore:', error);
-    throw error;
+    if (committed === 0) throw error;
+    // Lotes anteriores já foram gravados: mantém o cache coerente e informa o processamento parcial.
+    const partial = [...existing, ...toAdd.slice(0, committed)];
+    if (surgeriesCache !== null) surgeriesCache = partial;
+    try {
+      localStorage.setItem(LOCAL_KEYS.SURGERIES, JSON.stringify(partial));
+    } catch (e) {
+      console.warn('[NeuroGestor] LocalStorage cheio ao salvar batch parcial.');
+    }
+    throw new Error(
+      `Importação parcial: ${committed} de ${toAdd.length} cirurgias foram salvas antes da falha. ` +
+      'Repita a importação para concluir; as já salvas serão ignoradas como duplicadas.'
+    );
   }
 
   // Atualiza cache em memória e localStorage sempre

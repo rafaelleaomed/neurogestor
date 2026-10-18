@@ -31,6 +31,7 @@ service cloud.firestore {
       return isAuthenticated() && (isMasterEmail() || (hasProfile() && profile().status == 'APPROVED'));
     }
 
+    // O papel 'assistant' (secretária) NÃO é admin: só acessa as próprias cirurgias, como usuário comum.
     function owns(data) {
       return isApproved() && data.owner_email == request.auth.token.email;
     }
@@ -43,10 +44,13 @@ service cloud.firestore {
     }
 
     match /users/{userId} {
-      allow read: if isAdmin() || (isAuthenticated() && resource.data.email == request.auth.token.email);
+      // get usa só o {userId}: perfil novo (documento inexistente) precisa ser legível no primeiro login.
+      allow get: if isAdmin() || (isAuthenticated() && userId == request.auth.token.email);
+      allow list: if isAdmin() || (isAuthenticated() && resource.data.email == request.auth.token.email);
       // Autocadastro sempre como usuário PENDING, sem equipe nem configuração financeira.
       allow create: if isAdmin() || (
         isAuthenticated()
+        && userId == request.auth.token.email
         && request.resource.data.email == request.auth.token.email
         && request.resource.data.auth_uid == request.auth.uid
         && request.resource.data.status == 'PENDING'
@@ -57,6 +61,7 @@ service cloud.firestore {
       );
       allow update: if isAdmin() || (
         isAuthenticated()
+        && userId == request.auth.token.email
         && resource.data.email == request.auth.token.email
         && request.resource.data.email == resource.data.email
         && request.resource.data.auth_uid == resource.data.auth_uid
