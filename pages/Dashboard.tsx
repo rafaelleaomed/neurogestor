@@ -339,7 +339,8 @@ const Dashboard: React.FC<{ onLogout: () => void }> = ({ onLogout }) => {
     if (isDemo) {
       return surgeries && surgeries.length > 0 ? surgeries : getDemoMockSurgeries();
     }
-    if (isAssistant || (isOwner && viewScope === 'global')) {
+    // Assistente não é admin: só enxerga as próprias cirurgias (alinhado às regras do Firestore)
+    if (!isAssistant && isOwner && viewScope === 'global') {
       return surgeries;
     }
     return surgeries.filter(s => {

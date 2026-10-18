@@ -63,6 +63,7 @@ service cloud.firestore {
         isAuthenticated()
         && userId == request.auth.token.email
         && resource.data.email == request.auth.token.email
+        && resource.data.auth_uid == request.auth.uid
         && request.resource.data.email == resource.data.email
         && request.resource.data.auth_uid == resource.data.auth_uid
         && request.resource.data.diff(resource.data).affectedKeys().hasOnly([
@@ -77,18 +78,24 @@ service cloud.firestore {
       allow read, write: if isAdmin();
     }
 
+    // Menor privilégio: dados de referência só para aprovados que não sejam assistente.
+    // PENDING, DENIED e assistant não leem; escrita fica restrita a admin.
+    function canReadReference() {
+      return isAdmin() || (isApproved() && !(hasProfile() && profile().role == 'assistant'));
+    }
+
     match /config/{configId} {
-      allow read: if isAuthenticated();
+      allow read: if canReadReference();
       allow write: if isAdmin();
     }
 
     match /report_templates/{templateId} {
-      allow read: if isAuthenticated();
+      allow read: if canReadReference();
       allow write: if isAdmin();
     }
 
     match /electrode_models/{modelId} {
-      allow read: if isAuthenticated();
+      allow read: if canReadReference();
       allow write: if isAdmin();
     }
 

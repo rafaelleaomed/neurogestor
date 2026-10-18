@@ -1,11 +1,11 @@
 // Testes das regras do Firestore e do Storage no emulador.
-// Requer (não instalados no projeto): npm i -D @firebase/rules-unit-testing firebase
-// Execução: firebase emulators:exec --only firestore,storage "node --test firebase/tests/rules.test.mjs"
+// Requer Java (emulador) e as devDependencies @firebase/rules-unit-testing e firebase-tools.
+// Execução: npm run test:rules
 // Usa apenas e-mails e UIDs fictícios.
 import { test, before, after, beforeEach } from 'node:test';
 import { readFileSync } from 'node:fs';
 import {
-  initializeTestEnvironment, assertSucceeds, assertFails,
+  initializeTestEnvironment, assertSucceeds, assertFails, type RulesTestEnvironment,
 } from '@firebase/rules-unit-testing';
 import { doc, getDoc, setDoc, updateDoc, getDocs, collection, query, where } from 'firebase/firestore';
 import { ref, uploadBytes, getBytes } from 'firebase/storage';
@@ -17,12 +17,12 @@ const PENDING = 'pendente@teste.invalid';
 const ASSISTANT = 'secretaria@teste.invalid';
 const NEWUSER = 'novo@teste.invalid';
 
-let env;
+let env: RulesTestEnvironment;
 
-const ctx = (email, uid) =>
+const ctx = (email: string, uid: string) =>
   env.authenticatedContext(uid, { email, email_verified: true });
 
-const profile = (email, uid, status, role = 'user') =>
+const profile = (email: string, uid: string, status: string, role = 'user') =>
   ({ email, auth_uid: uid, name: 'Teste', status, role });
 
 before(async () => {
@@ -118,6 +118,31 @@ test('assistant não é admin: só as próprias cirurgias e sem acesso a passwor
   await assertFails(getDoc(doc(db, 'passwords', 'p1')));
   await assertSucceeds(setDoc(doc(db, 'surgeries', 's5'), { owner_email: ASSISTANT }));
 });
+
+// ---------- auth_uid em atualizações de perfil ----------
+test('perfil: atualização com auth_uid diferente do uid autenticado é recusada', async () => {
+  const db = ctx(APPROVED, 'uOutro').firestore();
+  await assertFails(updateDoc(doc(db, 'users', APPROVED), { name: 'x' }));
+});
+
+// ---------- Menor privilégio: config / report_templates / electrode_models ----------
+for (const col of ['config', 'report_templates', 'electrode_models']) {
+  test(`${col}: aprovado lê; assistant, PENDING e não autenticado não leem; só admin grava`, async () => {
+    await env.withSecurityRulesDisabled(async (c) => {
+      await setDoc(doc(c.firestore(), col, 'x1'), { v: 1 });
+      await setDoc(doc(c.firestore(), 'users', 'negado@teste.invalid'),
+        profile('negado@teste.invalid', 'uDeny', 'DENIED'));
+    });
+    await assertSucceeds(getDoc(doc(ctx(APPROVED, 'uAprov').firestore(), col, 'x1')));
+    await assertSucceeds(getDoc(doc(ctx(ADMIN, 'uAdmin').firestore(), col, 'x1')));
+    await assertFails(getDoc(doc(ctx(ASSISTANT, 'uAssist').firestore(), col, 'x1')));
+    await assertFails(getDoc(doc(ctx(PENDING, 'uPend').firestore(), col, 'x1')));
+    await assertFails(getDoc(doc(ctx('negado@teste.invalid', 'uDeny').firestore(), col, 'x1')));
+    await assertFails(getDoc(doc(env.unauthenticatedContext().firestore(), col, 'x1')));
+    await assertFails(setDoc(doc(ctx(APPROVED, 'uAprov').firestore(), col, 'x2'), { v: 2 }));
+    await assertSucceeds(setDoc(doc(ctx(ADMIN, 'uAdmin').firestore(), col, 'x2'), { v: 2 }));
+  });
+}
 
 // ---------- Storage ----------
 const png = () => new Uint8Array([1, 2, 3]);

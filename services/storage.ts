@@ -73,7 +73,35 @@ const LOCAL_KEYS = {
   PASSWORDS: 'neurogestor_passwords',
   REPORT_TEMPLATES: 'neurogestor_report_templates',
   ELECTRODE_MODELS: 'neurogestor_electrode_models',
-  LEARNED_CATEGORIES: 'neuro_learned_categories'
+  LEARNED_CATEGORIES: 'neuro_learned_categories',
+  CACHE_OWNER: 'neurogestor_cache_owner'
+};
+
+const normalizeEmail = (email?: string | null) => (email || '').toLowerCase().trim();
+
+const isPrivilegedUser = (u: User) =>
+  isMasterAdmin(u.email) || isAdminUser(u.email) || u.role === 'owner' || u.role === 'admin';
+
+// O cache do localStorage só vale para a identidade que o gravou (evita vazamento entre contas no mesmo navegador).
+const isCacheOwnedBy = (email?: string | null) => {
+  try {
+    const owner = localStorage.getItem(LOCAL_KEYS.CACHE_OWNER);
+    return !!owner && owner === normalizeEmail(email);
+  } catch {
+    return false;
+  }
+};
+
+const clearLocalCaches = () => {
+  try {
+    localStorage.removeItem(LOCAL_KEYS.SURGERIES);
+    localStorage.removeItem(LOCAL_KEYS.USERS);
+    localStorage.removeItem(LOCAL_KEYS.PASSWORDS);
+    localStorage.removeItem(LOCAL_KEYS.REPORT_TEMPLATES);
+    localStorage.removeItem(LOCAL_KEYS.ELECTRODE_MODELS);
+    localStorage.removeItem(LOCAL_KEYS.LEARNED_CATEGORIES);
+    localStorage.removeItem(LOCAL_KEYS.CACHE_OWNER);
+  } catch (e) {}
 };
 
 // ============================================================
@@ -131,14 +159,7 @@ export const cleanupStorageSession = () => {
   learnedCategoriesCache = null;
   currentListenerEmail = null;
 
-  try {
-    localStorage.removeItem(LOCAL_KEYS.SURGERIES);
-    localStorage.removeItem(LOCAL_KEYS.USERS);
-    localStorage.removeItem(LOCAL_KEYS.PASSWORDS);
-    localStorage.removeItem(LOCAL_KEYS.REPORT_TEMPLATES);
-    localStorage.removeItem(LOCAL_KEYS.ELECTRODE_MODELS);
-    localStorage.removeItem(LOCAL_KEYS.LEARNED_CATEGORIES);
-  } catch (e) {}
+  clearLocalCaches();
 };
 
 // ============================================================
@@ -199,6 +220,14 @@ export const initStorage = async () => {
   // Se o usuário mudou (ex: logout de Rafael e login de Michel), reinicia listeners
   if (currentListenerEmail !== null && currentListenerEmail !== sessionEmail) {
     cleanupStorageSession();
+  }
+
+  // Cache de outra identidade (ou sem dono, de versões anteriores) é descartado ANTES de iniciar os listeners.
+  if (!sessionEmail || !isCacheOwnedBy(sessionEmail)) {
+    clearLocalCaches();
+  }
+  if (sessionEmail) {
+    try { localStorage.setItem(LOCAL_KEYS.CACHE_OWNER, sessionEmail); } catch (e) {}
   }
 
   if (surgeriesUnsub) return;
@@ -269,12 +298,16 @@ export const initStorage = async () => {
     reportTemplatesCache = snap.docs.map(d => d.data() as ReportTemplate);
     localStorage.setItem(LOCAL_KEYS.REPORT_TEMPLATES, JSON.stringify(reportTemplatesCache));
     listeners.reports.forEach(cb => cb(reportTemplatesCache!));
+  }, (error) => {
+    console.warn('[NeuroGestor] Modelos de relatório indisponíveis para este perfil:', error.code);
   });
 
   electrodeModelsUnsub = onSnapshot(collection(db, COLLECTIONS.ELECTRODE_MODELS), (snap) => {
     electrodeModelsCache = snap.docs.map(d => d.data() as ElectrodeModel);
     localStorage.setItem(LOCAL_KEYS.ELECTRODE_MODELS, JSON.stringify(electrodeModelsCache));
     listeners.electrodes.forEach(cb => cb(electrodeModelsCache!));
+  }, (error) => {
+    console.warn('[NeuroGestor] Modelos de eletrodo indisponíveis para este perfil:', error.code);
   });
 
   // Listener de categorias aprendidas
@@ -418,13 +451,19 @@ export const getSurgeries = (): Surgery[] => {
   if (user && (user.is_demo || isDemoUser(user))) {
     return getDemoMockSurgeries();
   }
-  if (surgeriesCache !== null) return surgeriesCache;
-  // Fallback para localStorage (offline ou antes do listener conectar)
+  if (!user) return [];
+  const scope = (items: Surgery[]) =>
+    isPrivilegedUser(user)
+      ? items
+      : items.filter(s => normalizeEmail(s.owner_email) === normalizeEmail(user.email));
+  if (surgeriesCache !== null) return scope(surgeriesCache);
+  // Fallback para localStorage (offline ou antes do listener conectar), apenas se o cache for desta identidade
+  if (!isCacheOwnedBy(user.email)) return [];
   const data = localStorage.getItem(LOCAL_KEYS.SURGERIES);
   if (!data) return [];
   try {
     const parsed = JSON.parse(data);
-    return Array.isArray(parsed) ? parsed : [];
+    return Array.isArray(parsed) ? scope(parsed) : [];
   } catch {
     localStorage.removeItem(LOCAL_KEYS.SURGERIES);
     return [];
@@ -461,6 +500,12 @@ export const saveSurgery = async (surgery: Surgery) => {
   }
 };
 
+const stableSurgeryId = async (key: string): Promise<string> => {
+  const digest = await crypto.subtle.digest('SHA-256', new TextEncoder().encode(key));
+  const hex = Array.from(new Uint8Array(digest), b => b.toString(16).padStart(2, '0')).join('');
+  return `imp_${hex.slice(0, 32)}`;
+};
+
 export const saveSurgeriesBatch = async (newSurgeries: Surgery[]): Promise<number> => {
   if (!newSurgeries || newSurgeries.length === 0) return 0;
 
@@ -483,12 +528,23 @@ export const saveSurgeriesBatch = async (newSurgeries: Surgery[]): Promise<numbe
     ? existing.filter(s => s.owner_email === user.email)
     : existing;
 
-  newSurgeries.forEach(newItem => {
-    const itemWithId: Surgery = {
-      ...newItem,
-      id: newItem.id || crypto.randomUUID(),
-      owner_email: newItem.owner_email || user.email
-    };
+  // IDs derivados do conteúdo: o mesmo lote reenviado após falha parcial gera os mesmos IDs (set idempotente).
+  const occurrences = new Map<string, number>();
+  const withIds: Surgery[] = [];
+  for (const newItem of newSurgeries) {
+    const owner = newItem.owner_email || user.email;
+    let id = newItem.id;
+    if (!id) {
+      const key = [owner, normalize(newItem.paciente), (newItem.data || '').trim(), normalize(newItem.procedimento)]
+        .map(p => normalizeEmail(p)).join('|');
+      const n = (occurrences.get(key) || 0) + 1;
+      occurrences.set(key, n);
+      id = await stableSurgeryId(`${key}#${n}`);
+    }
+    withIds.push({ ...newItem, id, owner_email: owner });
+  }
+
+  withIds.forEach(itemWithId => {
 
     const isDuplicate = userExisting.some(old => {
       const oldPat = normalize(old.paciente);
@@ -858,11 +914,15 @@ export const getUsers = (): User[] => {
   if (usersCache !== null && usersCache.length > 0) {
     return [...usersCache];
   }
+  if (!user || !isCacheOwnedBy(user.email)) return [];
   const data = localStorage.getItem(LOCAL_KEYS.USERS);
   if (!data) return [];
   try {
     const parsed = JSON.parse(data);
-    return Array.isArray(parsed) ? [...parsed] : [];
+    if (!Array.isArray(parsed)) return [];
+    return isPrivilegedUser(user)
+      ? [...parsed]
+      : parsed.filter((u: User) => normalizeEmail(u.email) === normalizeEmail(user.email));
   } catch {
     localStorage.removeItem(LOCAL_KEYS.USERS);
     return [];
