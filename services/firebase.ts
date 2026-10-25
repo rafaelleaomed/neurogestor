@@ -2,12 +2,13 @@ import { initializeApp } from 'firebase/app';
 import { getFirestore } from 'firebase/firestore';
 import { getStorage } from 'firebase/storage';
 import { getMessaging, isSupported } from 'firebase/messaging';
+import { resolveAuthDomain } from './firebaseConfig.ts';
 
 const metaEnv = (typeof import.meta !== 'undefined' && (import.meta as any).env) || (typeof process !== 'undefined' && process.env) || {};
 
 const firebaseConfig = {
     apiKey: metaEnv.VITE_FIREBASE_API_KEY || "",
-    authDomain: metaEnv.VITE_FIREBASE_AUTH_DOMAIN || "neurogestor-app.firebaseapp.com",
+    authDomain: resolveAuthDomain(metaEnv.VITE_FIREBASE_AUTH_DOMAIN),
     projectId: metaEnv.VITE_FIREBASE_PROJECT_ID || "neurogestor-app",
     storageBucket: metaEnv.VITE_FIREBASE_STORAGE_BUCKET || "neurogestor-app.firebasestorage.app",
     messagingSenderId: metaEnv.VITE_FIREBASE_MESSAGING_SENDER_ID || "744896910428",
