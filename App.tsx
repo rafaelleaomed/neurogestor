@@ -15,7 +15,9 @@ import {
   updateSurgeriesBatch,
   updateUserFcmToken
 } from './services/storage';
-import { getAuthErrorMessage, observeAuth, signInWithGoogle, signOutUser } from './services/auth';
+import { completeGoogleRedirect, getAuthErrorMessage, observeAuth, signInWithGoogle, signOutUser } from './services/auth';
+import { buildAuthenticatedSessionUser } from './services/session';
+import { initializeAuthenticatedSession } from './services/sessionStartup';
 import { User } from './types';
 import { requestFirebaseNotificationPermission } from './services/notifications';
 import { isAdminUser, isDemoUser, DEMO_USER } from './constants';
@@ -34,7 +36,13 @@ const App: React.FC = () => {
       document.documentElement.classList.remove('dark');
     }
 
-    const unsubscribe = observeAuth(async (firebaseUser) => {
+    let unsubscribe = () => {};
+    let disposed = false;
+    let authHandlerGeneration = 0;
+
+    const handleAuthState = async (firebaseUser: Parameters<Parameters<typeof observeAuth>[0]>[0]) => {
+      const handlerGeneration = ++authHandlerGeneration;
+      const isCurrentHandler = () => !disposed && authHandlerGeneration === handlerGeneration;
       if (!firebaseUser) {
         const isDemoEntry = window.location.hash.includes('/demo') || window.location.search.includes('demo=true');
         if (isDemoEntry) {
@@ -55,10 +63,15 @@ const App: React.FC = () => {
       setAuthError(null);
       try {
         const profile = await getOrCreateUserProfile(firebaseUser);
-        setSession(profile);
-        setUser(profile);
-        await initStorage();
+        const sessionUser = buildAuthenticatedSessionUser(profile, firebaseUser);
+        await initializeAuthenticatedSession(sessionUser, {
+          setSession,
+          initStorage,
+          setUser,
+          isCurrent: isCurrentHandler
+        });
       } catch (error) {
+        if (!isCurrentHandler()) return;
         console.error('[NeuroGestor] Falha ao preparar a sessão autenticada.');
         setAuthError('Não foi possível preparar seu acesso. Tente novamente.');
         cleanupStorageSession();
@@ -70,12 +83,28 @@ const App: React.FC = () => {
           // A mensagem de erro não deve expor detalhes do provedor.
         }
       } finally {
-        setAuthReady(true);
-        setLoading(false);
+        if (isCurrentHandler()) {
+          setAuthReady(true);
+          setLoading(false);
+        }
       }
-    });
+    };
 
-    return unsubscribe;
+    const initializeAuth = async () => {
+      try {
+        await completeGoogleRedirect();
+      } catch (error) {
+        setAuthError(getAuthErrorMessage(error));
+      }
+      if (!disposed) unsubscribe = observeAuth(handleAuthState);
+    };
+
+    void initializeAuth();
+
+    return () => {
+      disposed = true;
+      unsubscribe();
+    };
   }, []);
 
   useEffect(() => {

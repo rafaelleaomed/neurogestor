@@ -8,7 +8,8 @@ export enum Category {
 export enum Status {
   AGENDADO = 'Agendado',
   REALIZADO = 'Realizado',
-  FATURADO = 'Faturado'
+  FATURADO = 'Faturado',
+  CANCELADO = 'Cancelado'
 }
 
 export type ComplexityLevel = 'routine' | 'challenging' | 'complex' | 'landmark';
@@ -52,6 +53,7 @@ export interface Surgery {
   codigo_tuss?: string; // Ex: '4.01.03.54-5' (Procedimento MNIO) ou '4.01.03.55-3' (Horas adicionais)
   cid_10?: string; // Ex: 'M48.0' (Estenose), 'M43.1' (Espondilolistese)
   numero_guia?: string; // Número da guia de autorização / TISS
+  status_before_cancel?: Status; // Preserva o status anterior ao cancelamento para reativação correta
 }
 
 export type PricingModelType = 'legacy_camarinha' | 'convenio' | 'fixed' | 'category';
