@@ -1,12 +1,13 @@
 import React, { useState, useMemo, useRef, useEffect } from 'react';
 import { useNavigate, useLocation } from 'react-router-dom';
 import { BarChart, Bar, XAxis, YAxis, CartesianGrid, Tooltip, ResponsiveContainer, PieChart, Pie, Cell, AreaChart, Area, Legend } from 'recharts';
-import { getSession, getSurgeries, saveSurgery, deleteSurgery, getUsers, saveUser, saveSurgeriesBatch, deleteSurgeriesBatch, updateUserStatus, updateUserRole, updateUserTeam, deleteUser, updateUserFcmToken } from '../services/storage';
+import { getSession, getSurgeries, saveSurgery, deleteSurgery, getUsers, saveUser, saveSurgeriesBatch, deleteSurgeriesBatch, updateUserStatus, updateUserRole, updateUserTeam, deleteUser, updateUserFcmToken, subscribeToSurgeries, subscribeToUsers } from '../services/storage';
 import { performBatchLabelsOCR, mapSpreadsheetWithAI } from '../services/gemini';
 import { messaging } from '../services/firebase';
 import { getToken } from 'firebase/messaging';
 
-import { Surgery, Category, User } from '../types';
+import { Surgery, Category, User, Status } from '../types';
+import { toggleSurgeryCancellation } from '../services/surgeryStatus';
 import { ADMIN_EMAIL, ADMIN_EMAILS, MASTER_ADMIN_EMAIL, isAdminUser, isMasterAdmin, AVAILABLE_TEAMS, COMPLEXITY_CONFIG, isDemoUser, DEMO_USER } from '../constants';
 import { DocumentsTab } from './DocumentsTab';
 import PortfolioTab from '../components/PortfolioTab';
@@ -69,6 +70,17 @@ const Dashboard: React.FC<{ onLogout: () => void }> = ({ onLogout }) => {
   }, [allUsers]);
 
   const [surgeries, setSurgeries] = useState<Surgery[]>(isDemo ? getDemoMockSurgeries() : getSurgeries());
+
+  // Mantém a tela sincronizada inclusive quando a primeira resposta do Firestore
+  // chega após o limite de espera da entrada no app.
+  useEffect(() => {
+    const unsubscribeSurgeries = subscribeToSurgeries((data) => setSurgeries([...data]));
+    const unsubscribeUsers = subscribeToUsers((data) => setAllUsers([...data]));
+    return () => {
+      unsubscribeSurgeries();
+      unsubscribeUsers();
+    };
+  }, [isDemo, currentUser?.auth_uid]);
 
   const [filterYear, setFilterYear] = useState<string>(new Date().getFullYear().toString());
   const [filterMonth, setFilterMonth] = useState<string>((new Date().getMonth() + 1).toString().padStart(2, '0'));
@@ -335,7 +347,7 @@ const Dashboard: React.FC<{ onLogout: () => void }> = ({ onLogout }) => {
     }
   };
 
-  const mySurgeries = useMemo(() => {
+  const allMySurgeries = useMemo(() => {
     if (isDemo) {
       return surgeries && surgeries.length > 0 ? surgeries : getDemoMockSurgeries();
     }
@@ -351,8 +363,11 @@ const Dashboard: React.FC<{ onLogout: () => void }> = ({ onLogout }) => {
     });
   }, [surgeries, viewingEmail, currentUser, isAssistant, isOwner, viewScope, isDemo]);
 
+  // Cirurgias canceladas permanecem na listagem (histórico), mas ficam fora de métricas, receita e portfólio
+  const mySurgeries = useMemo(() => allMySurgeries.filter(s => s.status !== Status.CANCELADO), [allMySurgeries]);
+
   const filteredSurgeries = useMemo(() => {
-    const filtered = mySurgeries.filter(s => {
+    const filtered = allMySurgeries.filter(s => {
       const searchLower = searchTerm.toLowerCase();
 
       const ptName = s.paciente?.toLowerCase() || '';
@@ -399,7 +414,7 @@ const Dashboard: React.FC<{ onLogout: () => void }> = ({ onLogout }) => {
 
       return { ...s, possivel_duplicata: isDuplicate };
     });
-  }, [mySurgeries, filterYearSurgeries, filterMonthSurgeries, searchTerm, sortOrder, isAdmin]);
+  }, [allMySurgeries, filterYearSurgeries, filterMonthSurgeries, searchTerm, sortOrder, isAdmin]);
 
   const isSelectedCurrentMonth = useMemo(() => {
     const realMonth = (new Date().getMonth() + 1).toString().padStart(2, '0');
@@ -624,7 +639,7 @@ const Dashboard: React.FC<{ onLogout: () => void }> = ({ onLogout }) => {
   };
 
   const currentListTotal = useMemo(() => {
-    return filteredSurgeries.reduce((acc, s) => acc + s.valor_estimado, 0);
+    return filteredSurgeries.reduce((acc, s) => acc + (s.status === Status.CANCELADO ? 0 : s.valor_estimado), 0);
   }, [filteredSurgeries]);
 
   const handleFilterByDoctor = (doctorName: string) => {
@@ -640,6 +655,26 @@ const Dashboard: React.FC<{ onLogout: () => void }> = ({ onLogout }) => {
     setSearchTerm(clean || hospitalName);
     setActiveTab('surgeries');
     window.scrollTo({ top: 0, behavior: 'smooth' });
+  };
+
+  const handleCancelSurgery = async (s: Surgery) => {
+    if (isDemo) {
+      showToast('Modo Demonstração: Cancelamento bloqueado para preservar os dados de exemplo.', 'error');
+      return;
+    }
+    const isCancelled = s.status === Status.CANCELADO;
+    const msg = isCancelled
+      ? `Reativar o registro de ${s.paciente}? Ele voltará a contar nas métricas e na receita.`
+      : `Cancelar a cirurgia de ${s.paciente}?\n\nO registro será mantido no histórico com status "Cancelado", mas deixará de contar nas métricas, receita e portfólio. Você poderá reativá-lo depois.`;
+    if (!window.confirm(msg)) return;
+    try {
+      await saveSurgery(toggleSurgeryCancellation(s));
+      refreshData();
+      setSelectedSurgery(null);
+    } catch (err) {
+      console.error('[NeuroGestor] Erro ao cancelar cirurgia:', err);
+      alert('Ocorreu um erro ao atualizar o registro. Tente novamente.');
+    }
   };
 
   const handleDeleteSurgery = async (e: React.MouseEvent, s: Surgery) => {
@@ -2103,6 +2138,9 @@ const Dashboard: React.FC<{ onLogout: () => void }> = ({ onLogout }) => {
                                 <span className="material-icons" style={{ fontSize: '10px' }}>warning</span> DUPLICATA?
                               </span>
                             )}
+                            {s.status === Status.CANCELADO && (
+                              <span className="bg-rose-500 text-white text-[8px] font-black uppercase tracking-wider px-2 py-0.5 rounded-full whitespace-nowrap">CANCELADA</span>
+                            )}
                           </div>
                           <div className="text-[10px] text-slate-400 font-bold uppercase mt-1 tracking-tighter">{s.hospital}</div>
                         </td>
@@ -2868,6 +2906,7 @@ const Dashboard: React.FC<{ onLogout: () => void }> = ({ onLogout }) => {
                 </div>
                 <div className="p-4 sm:p-10 sm:pt-0 flex flex-col sm:flex-row sm:justify-end gap-3 sm:gap-4 flex-shrink-0 border-t sm:border-t-0 border-slate-100 dark:border-slate-800">
                   <button onClick={() => { setSelectedSurgery(null); navigate(`/edit/${selectedSurgery.id}`, { state: { filterYearSurgeries, filterMonthSurgeries } }); }} className="w-full sm:w-auto px-8 py-3.5 sm:py-4 bg-primary text-white font-black rounded-2xl shadow-xl shadow-primary/20 hover:scale-[1.03] transition-all uppercase text-xs tracking-widest">Editar Registro</button>
+                  <button onClick={() => handleCancelSurgery(selectedSurgery)} className="w-full sm:w-auto px-8 py-3.5 sm:py-4 bg-rose-50 dark:bg-rose-900/20 text-rose-600 dark:text-rose-400 font-black rounded-2xl uppercase text-xs tracking-widest">{selectedSurgery.status === Status.CANCELADO ? 'Reativar Cirurgia' : 'Cancelar Cirurgia'}</button>
                   <button onClick={() => setSelectedSurgery(null)} className="w-full sm:w-auto px-8 py-3.5 sm:py-4 bg-slate-100 dark:bg-slate-800 text-slate-500 dark:text-slate-300 font-black rounded-2xl uppercase text-xs tracking-widest">Fechar</button>
                 </div>
               </div>

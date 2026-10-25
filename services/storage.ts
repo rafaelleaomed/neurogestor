@@ -2,13 +2,15 @@
 import { db } from './firebase.ts';
 import {
   collection, doc, getDocs, setDoc, deleteDoc,
-  getDoc, writeBatch, query, where, onSnapshot, Unsubscribe
+  getDoc, writeBatch, query, where, onSnapshot, Unsubscribe,
+  type QuerySnapshot, type DocumentData
 } from 'firebase/firestore';
 import { firebaseStorage } from './firebase.ts';
 import { auth } from './auth.ts';
 import { ref, uploadBytes, getDownloadURL } from 'firebase/storage';
 import { Surgery, Category, User, PasswordEntry, ReportTemplate, ElectrodeModel, LearnedCategory } from '../types.ts';
 import { SEED_DOCTORS, SEED_HOSPITALS, isDemoUser, DEMO_USER, isMasterAdmin, isAdminUser } from '../constants.ts';
+import { subscribeWithReady } from './dataSubscription.ts';
 import { getDemoMockSurgeries, saveDemoMockSurgery, DEMO_FICTITIOUS_PASSWORDS } from './mockDemoData.ts';
 
 // ============================================================
@@ -252,6 +254,8 @@ export const cleanupStorageSession = () => {
   }
 
   // Descarta observers para evitar repovoamento tardio após troca de autorização
+  listeners.surgeries = [];
+  listeners.users = [];
   listeners.passwords = [];
   listeners.reports = [];
   listeners.electrodes = [];
@@ -275,9 +279,33 @@ export const cleanupStorageSession = () => {
 // ============================================================
 type DataCallback<T> = (data: T[]) => void;
 const listeners = {
+  surgeries: [] as DataCallback<Surgery>[],
+  users: [] as DataCallback<User>[],
   passwords: [] as DataCallback<PasswordEntry>[],
   reports: [] as DataCallback<ReportTemplate>[],
   electrodes: [] as DataCallback<ElectrodeModel>[]
+};
+
+export const subscribeToSurgeries = (cb: DataCallback<Surgery>) => {
+  const user = getSession();
+  if (user && (user.is_demo || isDemoUser(user))) {
+    cb(getDemoMockSurgeries());
+    return () => {};
+  }
+  listeners.surgeries.push(cb);
+  cb(surgeriesCache && isMemoryCacheValidForActiveSession() ? [...surgeriesCache] : []);
+  return () => { listeners.surgeries = listeners.surgeries.filter(l => l !== cb); };
+};
+
+export const subscribeToUsers = (cb: DataCallback<User>) => {
+  const user = getSession();
+  if (user && (user.is_demo || isDemoUser(user))) {
+    cb([DEMO_USER]);
+    return () => {};
+  }
+  listeners.users.push(cb);
+  cb(usersCache && isMemoryCacheValidForActiveSession() ? [...usersCache] : []);
+  return () => { listeners.users = listeners.users.filter(l => l !== cb); };
 };
 
 export const subscribeToPasswords = (cb: DataCallback<PasswordEntry>) => {
@@ -438,13 +466,15 @@ export const initStorage = async () => {
     ? collection(db, COLLECTIONS.SURGERIES)
     : query(collection(db, COLLECTIONS.SURGERIES), where('owner_email', '==', sessionEmail));
 
-  // Listener de cirurgias em tempo real
-  surgeriesUnsub = onSnapshot(
-    surgeriesQuery,
+  // Listener de cirurgias em tempo real. A inicialização só conclui após o primeiro valor,
+  // garantindo que a Dashboard seja montada com o cache já preenchido.
+  const surgeriesSubscription = subscribeWithReady<QuerySnapshot<DocumentData>>(
+    (next, fail) => onSnapshot(surgeriesQuery, (snapshot) => next(snapshot), (error) => fail(error)),
     (snapshot) => {
       if (!isListenerActiveForCurrentSession()) return;
       surgeriesCache = snapshot.docs.map(d => ({ id: d.id, ...d.data() } as Surgery));
       syncMemoryCacheOwner();
+      listeners.surgeries.forEach(cb => cb([...(surgeriesCache || [])]));
       // Atualiza localStorage como cache offline (silencioso se falhar por falta de espaço)
       try {
         if (sessionEmail && sessionUid && isCacheOwnedBy(sessionEmail, sessionUid)) {
@@ -460,6 +490,8 @@ export const initStorage = async () => {
       console.warn('[NeuroGestor] Firestore surgeries listener error:', error);
     }
   );
+  surgeriesUnsub = surgeriesSubscription.unsubscribe;
+  await surgeriesSubscription.ready;
 
   // Listener de usuários em tempo real
   const usersQuery = isOwnerOrAdmin
@@ -516,6 +548,7 @@ export const initStorage = async () => {
         setSession(null);
         return;
       }
+      listeners.users.forEach(cb => cb([...(usersCache || [])]));
     },
     (error) => {
       console.warn('[NeuroGestor] Firestore users listener error:', error);

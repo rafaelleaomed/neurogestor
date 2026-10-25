@@ -1,4 +1,12 @@
 {
+  "auth": {
+    "providers": {
+      "googleSignIn": {
+        "oAuthBrandDisplayName": "NeuroGestor",
+        "supportEmail": "bingotwogether@gmail.com"
+      }
+    }
+  },
   "hosting": {
     "public": "dist",
     "ignore": [
