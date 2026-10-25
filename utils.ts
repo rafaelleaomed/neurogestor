@@ -2,6 +2,7 @@
 import { Surgery, Category, User } from './types';
 import { PRICING, COMPLEX_KEYWORDS, PERIPHERAL_KEYWORDS, TUMOR_KEYWORDS, HOSPITAL_ALIASES, DOCTOR_ALIASES } from './constants';
 import { getGlobalLearnedCategories, saveLearnedCategoryGlobal } from './services/storage';
+import { buildSurgeryExportRows } from './services/spreadsheetExport';
 import * as XLSX from 'xlsx';
 
 /**
@@ -186,26 +187,8 @@ export const formatDate = (dateStr: string) => {
 };
 
 export const exportToExcel = (surgeries: Surgery[], user: User | null, month: string, year: string) => {
-  // Ordenar por data em ordem crescente (01 -> 31)
-  const sortedSurgeries = [...surgeries].sort((a, b) => {
-    return new Date(a.data).getTime() - new Date(b.data).getTime();
-  });
-
-  const data = sortedSurgeries.map(s => ({
-    'Data': formatDate(s.data),
-    'Paciente': s.paciente,
-    'Procedimento': s.procedimento,
-    'Categoria': s.categoria,
-    'Médico': s.medico,
-    'Hospital': s.hospital,
-    'Convênio': s.convenio || 'Particular',
-    'Código TUSS': s.codigo_tuss || '',
-    'CID-10': s.cid_10 || '',
-    'Nº Guia': s.numero_guia || '',
-    'Valor Estimado': s.valor_estimado,
-    'Etiqueta': Array.isArray(s.label_images) && s.label_images.length > 0 ? '✅ SIM' : '❌ NÃO',
-    'Relatório': Array.isArray(s.report_images) && s.report_images.length > 0 ? '✅ SIM' : '❌ NÃO'
-  }));
+  const data = buildSurgeryExportRows(surgeries);
+  const sortedSurgeries = [...surgeries].sort((a, b) => new Date(a.data).getTime() - new Date(b.data).getTime());
 
   const worksheet = XLSX.utils.json_to_sheet(data);
 
@@ -221,6 +204,7 @@ export const exportToExcel = (surgeries: Surgery[], user: User | null, month: st
     { wch: 15 }, // Código TUSS
     { wch: 12 }, // CID-10
     { wch: 16 }, // Nº Guia
+    { wch: 14 }, // Status
     { wch: 15 }, // Valor
     { wch: 10 }, // Etiqueta
     { wch: 10 }, // Relatório
